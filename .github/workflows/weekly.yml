@@ -1,0 +1,24 @@
+name: weekly-update
+# Pulls new events, reruns the quality checks and tests, and rebuilds the evaluation reports.
+# This repo is public, so workflow artifacts are downloadable by any signed-in GitHub user. Only the aggregate markdown reports
+# are uploaded; the fight-week HTML embeds scraped odds and is never uploaded (spec principle 7).
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch: {}
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .[dev]
+      - run: python -m ufcmodel update
+      - run: python -m pytest -q
+      - run: python -m ufcmodel phase10 --no-ablation
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: docs/*.md
