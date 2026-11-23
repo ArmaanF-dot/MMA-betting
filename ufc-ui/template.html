@@ -1,0 +1,738 @@
+<title>Fight Signal</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Sora:wght@300;400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<style>
+/* Layout: one continuous dark world, a fixed WebGL layer behind glass panels. Each upcoming card is a chapter in its own light colour with a
+   verdict, a stake per fight, expected earnings and a timeline. Evidence and the rule come last. Everything shown comes from the exported data. */
+:root {
+  --void: #04050A;      --ink: #E8EDF7;      --mist: #8C97AD;
+  --ice: #5CE1FF;       --ember: #FF3D4F;    --jade: #2EF2A0;    --amber: #FFC21A;
+  --good: #2EF2A0;      --bad: #FF5C6C;
+  --acc: #5CE1FF;
+  --line: rgba(232, 237, 247, 0.13);   --glass: rgba(255, 255, 255, 0.04);
+  --display: "Unbounded", "Arial Black", Helvetica, sans-serif;
+  --body: "Sora", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --h1: clamp(2.8rem, 10vw, 11rem);
+  --h2: clamp(1.9rem, 4.8vw, 5.4rem);
+  --h3: clamp(1.4rem, 2.6vw, 2.4rem);
+  --statement: clamp(1.15rem, 1.8vw, 1.7rem);
+  --gap: clamp(80px, 11vw, 160px);
+  --ease: cubic-bezier(.16, 1, .3, 1);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; background: var(--void); }
+body { margin: 0; background: var(--void); color: var(--ink); font: 300 1.0625rem/1.65 var(--body); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+::selection { background: var(--acc); color: var(--void); }
+a { color: inherit; }
+img, video { display: block; max-width: 100%; }
+p { margin: 0; text-wrap: pretty; }
+h1, h2, h3 { margin: 0; font-family: var(--display); font-weight: 800; text-wrap: balance; text-transform: uppercase; }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--acc); outline-offset: 4px; }
+.wrap { max-width: 1480px; margin: 0 auto; padding-inline: max(20px, env(safe-area-inset-left, 0px)) max(20px, env(safe-area-inset-right, 0px)); position: relative; }
+@media (min-width: 901px) { .wrap { padding-left: max(72px, env(safe-area-inset-left, 0px)); } }
+main, footer { position: relative; z-index: 2; }
+
+#stage { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+.fx { position: fixed; inset: 0; pointer-events: none; z-index: 1; }
+.fx.tint { background: radial-gradient(60vw 50vh at 78% 30%, color-mix(in srgb, var(--acc) 22%, transparent), transparent 70%), radial-gradient(50vw 50vh at 8% 90%, color-mix(in srgb, var(--acc) 12%, transparent), transparent 70%); mix-blend-mode: screen; }
+.fx.grid { background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px); background-size: 64px 64px; opacity: .3; mask-image: radial-gradient(70vw 70vh at 50% 40%, #000, transparent 75%); -webkit-mask-image: radial-gradient(70vw 70vh at 50% 40%, #000, transparent 75%); }
+.fx.vig { background: radial-gradient(120% 90% at 50% 40%, transparent 55%, rgba(0, 0, 0, .65)); }
+.fx.grain { opacity: .06; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); animation: grain 1.2s steps(6) infinite; }
+@keyframes grain { 0% { transform: translate(0, 0) } 20% { transform: translate(-3%, 2%) } 40% { transform: translate(2%, -3%) } 60% { transform: translate(-2%, -1%) } 80% { transform: translate(3%, 3%) } 100% { transform: translate(0, 0) } }
+
+/* HUD */
+.hud { position: fixed; z-index: 30; pointer-events: none; font: 400 .72rem/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--mist); }
+.pbar { inset: 0 0 auto 0; height: calc(36px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) max(20px, env(safe-area-inset-right, 0px)) 0 max(20px, env(safe-area-inset-left, 0px)); display: flex; align-items: center; gap: 8px 30px; overflow-x: auto; white-space: nowrap; scrollbar-width: none; pointer-events: auto; background: rgba(4, 5, 10, .9); border-bottom: 1px solid var(--line); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); z-index: 40; transition: background 400ms; }
+.pbar::-webkit-scrollbar { display: none; }
+.pbar.flash { background: color-mix(in srgb, var(--acc) 22%, rgba(4, 5, 10, .9)); }
+.pbar .seg { display: inline-flex; align-items: center; gap: 8px; letter-spacing: .06em; }
+.pbar .seg em { font-style: normal; color: var(--acc); }
+.pbar b { color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; }
+.pbar b.pos { color: var(--good); } .pbar b.neg { color: var(--bad); }
+.pbar .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 10px var(--good); animation: blink 1.8s infinite; }
+.topbar { inset: calc(36px + env(safe-area-inset-top, 0px)) 0 auto 0; padding: 14px max(20px, env(safe-area-inset-right, 0px)) 14px max(20px, env(safe-area-inset-left, 0px)); display: flex; justify-content: space-between; align-items: center; gap: 18px; pointer-events: auto; background: linear-gradient(rgba(4, 5, 10, .78), transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); mask-image: linear-gradient(#000 70%, transparent); -webkit-mask-image: linear-gradient(#000 70%, transparent); }
+@media (min-width: 901px) { .topbar { padding-left: max(72px, env(safe-area-inset-left, 0px)); } }
+.topbar .mark { font: 800 .95rem/1 var(--display); letter-spacing: .02em; text-decoration: none; color: var(--ink); text-transform: uppercase; white-space: nowrap; }
+.topbar .mark i { color: var(--acc); font-style: normal; }
+.topbar nav { display: flex; gap: 6px 26px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.topbar nav a { color: var(--ink); text-decoration: none; opacity: .78; transition: opacity 200ms, color 200ms; }
+.topbar nav a:hover { opacity: 1; color: var(--acc); }
+.live { display: inline-flex; align-items: center; gap: 8px; color: var(--mist); }
+.live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 10px var(--amber); animation: blink 1.8s infinite; }
+@keyframes blink { 50% { opacity: .3; } }
+.rail { inset: 50% auto auto max(14px, env(safe-area-inset-left, 0px)); transform: translateY(-50%); display: grid; gap: 22px; }
+.rail a { pointer-events: auto; display: flex; align-items: center; gap: 12px; color: var(--mist); text-decoration: none; transition: color 300ms; }
+.rail a::before { content: ""; width: 7px; height: 7px; border: 1px solid currentColor; transform: rotate(45deg); transition: background 300ms, box-shadow 300ms; }
+.rail a span { opacity: 0; transform: translateX(-6px); transition: opacity 300ms, transform 300ms var(--ease); white-space: nowrap; background: rgba(4, 5, 10, .85); padding: 4px 8px; }
+.rail a.on { color: var(--acc); }
+.rail a.on::before { background: var(--acc); box-shadow: 0 0 12px var(--acc); }
+.rail a:hover span { opacity: 1; transform: none; }
+.meter { inset: auto max(20px, env(safe-area-inset-right, 0px)) calc(18px + env(safe-area-inset-bottom, 0px)) auto; text-align: right; display: grid; gap: 6px; }
+.meter b { color: var(--ink); font-weight: 500; font-size: 1.3rem; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
+.meter .bar { height: 2px; width: 120px; background: var(--line); margin-left: auto; position: relative; overflow: hidden; }
+.meter .bar i { position: absolute; inset: 0; background: var(--acc); transform-origin: left; transform: scaleX(var(--p, 0)); box-shadow: 0 0 10px var(--acc); }
+.corner { width: 22px; height: 22px; border: 1px solid var(--line); }
+.corner.tl { top: calc(100px + env(safe-area-inset-top, 0px)); left: max(46px, env(safe-area-inset-left, 0px)); border-right: 0; border-bottom: 0; }
+.corner.br { bottom: calc(18px + env(safe-area-inset-bottom, 0px)); left: max(46px, env(safe-area-inset-left, 0px)); border-left: 0; border-top: 0; }
+.tag { display: inline-flex; align-items: center; gap: 10px; font: 400 .74rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--acc); }
+.tag::before { content: ""; width: 26px; height: 1px; background: currentColor; }
+.btn { position: relative; display: inline-flex; align-items: center; gap: 10px; padding: 13px 20px; font: 500 .78rem/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; text-decoration: none; color: var(--void); background: var(--acc); border: 0; cursor: pointer; clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px); transition: transform 160ms var(--ease); will-change: transform; }
+.btn:active { transform: scale(.96); }
+.cur { position: fixed; z-index: 60; left: 0; top: 0; width: 38px; height: 38px; margin: -19px 0 0 -19px; border: 1px solid var(--acc); border-radius: 50%; pointer-events: none; opacity: 0; transition: width 250ms var(--ease), height 250ms var(--ease), margin 250ms var(--ease), background 250ms; mix-blend-mode: screen; }
+.cur.big { width: 78px; height: 78px; margin: -39px 0 0 -39px; background: color-mix(in srgb, var(--acc) 14%, transparent); }
+.cur-dot { position: fixed; z-index: 61; left: 0; top: 0; width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px; border-radius: 50%; background: var(--acc); pointer-events: none; opacity: 0; }
+@media (hover: none) { .cur, .cur-dot { display: none; } }
+
+/* hero */
+.hero { padding-top: calc(clamp(100px, 13vw, 160px) + 36px); padding-bottom: calc(var(--gap) * .6); position: relative; }
+.scanline { position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--acc); box-shadow: 0 0 24px 6px var(--acc); opacity: 0; pointer-events: none; z-index: 3; }
+.hero h1 { font-size: var(--h1); line-height: .9; letter-spacing: -.035em; margin-top: 22px; }
+.hero h1 .w { display: block; padding-bottom: .06em; }
+.hero h1 .w:nth-child(2) { color: var(--acc); text-shadow: 0 0 70px color-mix(in srgb, var(--acc) 45%, transparent); transition: color 900ms var(--ease); }
+.hero h1 .c { display: inline-block; will-change: transform; }
+.hero-row { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 32px 4vw; align-items: center; margin-top: clamp(28px, 4vw, 52px); }
+.statement { font-size: var(--statement); line-height: 1.35; font-weight: 300; letter-spacing: -.005em; }
+.notice { display: flex; gap: 14px; align-items: flex-start; border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent); background: color-mix(in srgb, var(--amber) 7%, transparent); padding: 14px 18px; font-size: .9rem; color: #e9dcb4; margin-top: 26px; max-width: 46rem; }
+.notice::before { content: "!"; flex: none; width: 22px; height: 22px; display: grid; place-items: center; font: 700 .85rem/1 var(--mono); color: var(--void); background: var(--amber); clip-path: polygon(50% 0, 100% 100%, 0 100%); padding-top: 6px; }
+.slot { position: relative; width: 100%; aspect-ratio: 1 / 1; }
+.hero .slot { aspect-ratio: 1 / .9; }
+
+/* verdict tiles */
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 28px; }
+.tile { display: grid; gap: 6px; align-content: start; }
+.tile .k { font: 400 .7rem/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--mist); }
+.tile .v { font: 800 clamp(1.5rem, 3vw, 2.7rem)/1 var(--display); letter-spacing: -.03em; font-variant-numeric: tabular-nums; color: var(--acc); text-shadow: 0 0 26px color-mix(in srgb, var(--acc) 50%, transparent); }
+.tile .v.neg { color: var(--bad); text-shadow: 0 0 26px color-mix(in srgb, var(--bad) 40%, transparent); }
+.tile .s { font-size: .84rem; color: var(--mist); line-height: 1.45; }
+
+/* marquee */
+.marquee { overflow: hidden; border-block: 1px solid var(--line); padding-block: 16px; position: relative; z-index: 2; background: rgba(4, 5, 10, .55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+.marquee .track { display: flex; width: max-content; gap: 44px; animation: slide 46s linear infinite; font: 800 clamp(1rem, 2vw, 1.6rem)/1 var(--display); text-transform: uppercase; letter-spacing: -.01em; white-space: nowrap; }
+.marquee .track span { display: inline-flex; align-items: center; gap: 44px; }
+.marquee .track span::after { content: ""; width: 9px; height: 9px; background: var(--acc); transform: rotate(45deg); box-shadow: 0 0 14px var(--acc); }
+.marquee .track span:nth-child(even) { color: rgba(232, 237, 247, .32); }
+@keyframes slide { to { transform: translateX(-50%); } }
+
+/* chapters */
+.ch { position: relative; }
+.open { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 40px 5vw; align-items: center; padding-block: var(--gap) clamp(48px, 7vw, 100px); }
+.open.flip > .slot { order: -1; }
+.open h2 { font-size: var(--h2); line-height: .94; letter-spacing: -.04em; margin-top: 20px; }
+.open .statement { margin-top: 26px; max-width: 32rem; }
+.open .what { margin-top: 16px; max-width: 34rem; color: var(--mist); }
+.block { padding-bottom: var(--gap); display: grid; gap: clamp(28px, 4vw, 52px); }
+.block h3 { font-size: var(--h3); line-height: 1; letter-spacing: -.03em; margin-top: 14px; }
+.sec-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 10px 30px; }
+.cap { font: 400 .76rem/1.5 var(--mono); letter-spacing: .06em; color: var(--mist); text-transform: uppercase; }
+.panel { position: relative; background: var(--glass); border: 1px solid var(--line); backdrop-filter: blur(16px) saturate(1.3); -webkit-backdrop-filter: blur(16px) saturate(1.3); padding: 22px; transition: border-color 300ms, transform 400ms var(--ease); }
+.panel::before { content: ""; position: absolute; inset: -1px; pointer-events: none; background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%), color-mix(in srgb, var(--acc) 30%, transparent), transparent 60%); opacity: 0; transition: opacity 300ms; mask: linear-gradient(#000, #000) content-box exclude, linear-gradient(#000, #000); -webkit-mask-composite: xor; padding: 1px; }
+.panel:hover { border-color: color-mix(in srgb, var(--acc) 55%, var(--line)); }
+.panel:hover::before { opacity: 1; }
+.panel::after { content: ""; position: absolute; top: -1px; left: -1px; width: 14px; height: 14px; border-top: 2px solid var(--acc); border-left: 2px solid var(--acc); }
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.stats .tile .v { font-size: clamp(1.3rem, 2.4vw, 2.2rem); }
+
+/* fights */
+.fights { display: grid; gap: 12px; }
+.fight { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.3fr) minmax(0, .9fr); gap: 18px 28px; align-items: center; }
+.fight .names { display: grid; gap: 4px; }
+.fight .names b { font: 600 1.02rem/1.25 var(--body); letter-spacing: -.01em; }
+.fight .names b em { font-style: normal; color: var(--mist); font-weight: 300; padding: 0 6px; }
+.fight .meta { font: 400 .7rem/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--mist); }
+.tug { position: relative; height: 26px; }
+.tug .track { position: absolute; left: 0; right: 0; top: 11px; height: 4px; background: var(--line); }
+.tug .fill { position: absolute; left: 0; top: 11px; height: 4px; background: color-mix(in srgb, var(--acc) 45%, transparent); width: var(--mk, 50%); transform-origin: left; }
+.tug .mk { position: absolute; top: 5px; width: 0; height: 16px; border-left: 2px solid var(--ink); left: var(--x); }
+.tug .mk.model { border-color: var(--acc); top: 2px; height: 22px; box-shadow: 0 0 8px var(--acc); }
+.tug .mk.blend { border-color: var(--ink); border-style: dashed; }
+.nums-row { display: flex; justify-content: space-between; gap: 8px; font: 400 .7rem/1.3 var(--mono); letter-spacing: .06em; color: var(--mist); margin-top: 4px; flex-wrap: wrap; }
+.nums-row b { color: var(--ink); font-weight: 500; }
+.verdict { display: grid; gap: 6px; justify-items: start; }
+.chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; font: 500 .78rem/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px); }
+.chip.bet { background: var(--acc); color: var(--void); }
+.chip.pass { background: transparent; color: var(--mist); box-shadow: inset 0 0 0 1px var(--line); clip-path: none; }
+.verdict .why { font-size: .84rem; color: var(--mist); line-height: 1.45; }
+.verdict .why b { color: var(--ink); font-weight: 600; }
+details.more { grid-column: 1 / -1; border-top: 1px solid var(--line); padding-top: 12px; margin-top: 2px; }
+details.more summary { cursor: pointer; font: 400 .72rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--mist); list-style: none; display: flex; gap: 10px; align-items: center; }
+details.more summary::before { content: "+"; color: var(--acc); font-size: 1rem; line-height: 1; }
+details.more[open] summary::before { content: "-"; }
+details.more summary::-webkit-details-marker { display: none; }
+.more-body { display: flex; flex-wrap: wrap; gap: 8px 22px; padding-top: 12px; font-size: .88rem; color: #c3cbdb; }
+.more-body span em { font-style: normal; color: var(--mist); font: 400 .7rem/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; padding-right: 8px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 22px; font: 400 .7rem/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--mist); }
+.legend i { display: inline-block; width: 0; height: 12px; border-left: 2px solid var(--ink); margin-right: 8px; vertical-align: -2px; }
+.legend i.m { border-color: var(--acc); }
+.legend i.b { border-style: dashed; }
+
+/* results */
+.win { color: var(--acc); font-weight: 700; }
+.picks2 { display: flex; flex-wrap: wrap; gap: 6px 8px; }
+.pk { font: 400 .7rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 6px 9px; border: 1px solid var(--line); white-space: nowrap; }
+.pk.ok { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+.pk.no { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+.accrow { display: grid; grid-template-columns: 96px minmax(0, 1fr) 50px; gap: 12px; align-items: center; margin-bottom: 14px; font: 400 .74rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--mist); }
+.accbar { position: relative; height: 18px; background: var(--line); }
+.accbar .rng { position: absolute; top: 5px; height: 8px; background: color-mix(in srgb, var(--acc) 35%, transparent); }
+.accbar .dot { position: absolute; top: 3px; width: 12px; height: 12px; margin-left: -6px; background: var(--acc); transform: rotate(45deg); box-shadow: 0 0 12px var(--acc); }
+.accbar .coin { position: absolute; left: 50%; top: -3px; height: 24px; border-left: 1px dashed var(--ink); }
+.accrow .val { color: var(--ink); text-align: right; }
+/* charts */
+.chart { width: 100%; height: auto; display: block; overflow: visible; }
+.chart text { font: 400 11px var(--mono); fill: var(--mist); letter-spacing: .06em; }
+.chart .zero { stroke: var(--ink); stroke-width: 1; opacity: .55; }
+.chart .grid line { stroke: var(--line); stroke-width: 1; }
+.chart .bar-m { fill: var(--acc); opacity: .75; transform-box: fill-box; transform-origin: bottom; }
+.chart .bar-k { fill: none; stroke: var(--ink); stroke-width: 1; opacity: .6; transform-box: fill-box; transform-origin: bottom; }
+.chart .wh { transform-box: fill-box; transform-origin: center; }
+.chart .lab { fill: var(--ink); font: 400 12px var(--body); letter-spacing: 0; }
+.twocol { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); gap: 24px; }
+
+/* timeline */
+.timeline { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; position: relative; }
+.timeline::before { content: ""; position: absolute; left: 6px; right: 6px; top: 7px; height: 1px; background: var(--line); }
+.node { position: relative; padding-top: 28px; display: grid; gap: 6px; align-content: start; }
+.node::before { content: ""; position: absolute; top: 0; left: 0; width: 15px; height: 15px; transform: rotate(45deg) scale(.6); border: 1px solid var(--mist); background: var(--void); }
+.node.done::before { background: var(--acc); border-color: var(--acc); box-shadow: 0 0 14px var(--acc); transform: rotate(45deg) scale(.7); }
+.node.upcoming::before, .node.due::before { border-color: var(--acc); }
+.node.missed::before { border-color: var(--bad); }
+.node b { font: 600 .98rem/1.2 var(--body); }
+.node .t { font: 400 .72rem/1.4 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--mist); }
+.node .st { font: 500 .7rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--acc); }
+.node.missed .st { color: var(--bad); }
+.picks { display: grid; gap: 10px; }
+.pickrow { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 18px; align-items: baseline; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+.pickrow:last-child { border-bottom: 0; padding-bottom: 0; }
+.pickrow b { font-weight: 600; }
+.tier { font: 500 .68rem/1 var(--mono); letter-spacing: .12em; color: var(--void); background: var(--acc); padding: 4px 8px; margin-left: 8px; }
+.prose { display: grid; gap: 14px; color: #c9d1e1; max-width: 40rem; }
+.flow { margin: 0; padding: 0; list-style: none; display: grid; gap: 14px; counter-reset: s; }
+.flow li { counter-increment: s; display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 14px; align-items: start; font-size: 1.05rem; line-height: 1.45; }
+.flow li::before { content: counter(s, decimal-leading-zero); font: 500 .8rem/1 var(--mono); color: var(--acc); padding-top: 6px; letter-spacing: .08em; }
+.divider { height: 1px; background: var(--line); position: relative; transform-origin: left; }
+.divider::after { content: ""; position: absolute; right: 0; top: -4px; width: 9px; height: 9px; background: var(--acc); transform: rotate(45deg); box-shadow: 0 0 14px var(--acc); }
+.foot { padding-block: var(--gap) 64px; }
+.foot .big { font: 800 clamp(2.6rem, 11.5vw, 12.5rem)/.9 var(--display); letter-spacing: -.04em; text-transform: uppercase; color: rgba(232, 237, 247, .16); position: relative; }
+.foot .big span { position: absolute; inset: 0; color: var(--ink); clip-path: inset(0 calc(100% - var(--fill, 0%)) 0 0); }
+.foot-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 24px 48px; margin-top: 40px; }
+.foot .fine { font-size: .9rem; max-width: 40rem; color: var(--mist); }
+
+@media (max-width: 900px) {
+  .hero-row, .open, .twocol, .fight { grid-template-columns: minmax(0, 1fr); }
+  .open.flip > .slot { order: 0; }
+  .open > .slot, .hero-row > .slot { order: -1; max-width: 460px; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rail, .corner { display: none; }
+  .topbar nav a:not(.btn) { display: none; }
+  .timeline { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 12px; }
+  .timeline::before { display: none; }
+}
+@media (max-width: 560px) { .tiles { grid-template-columns: minmax(0, 1fr); } .meter { display: none; } }
+@media (prefers-reduced-motion: reduce) { .fx.grain, .marquee .track, .live::before { animation: none; } * { transition-duration: .01ms !important; } }
+</style>
+
+<canvas id="stage" aria-hidden="true"></canvas>
+<div class="fx tint" aria-hidden="true"></div><div class="fx grid" aria-hidden="true"></div><div class="fx vig" aria-hidden="true"></div><div class="fx grain" aria-hidden="true"></div>
+<div class="cur" aria-hidden="true"></div><div class="cur-dot" aria-hidden="true"></div>
+
+<div class="hud pbar" id="pbar" aria-live="polite"></div>
+<header class="hud topbar"><a class="mark" href="#top">Fight<i>/</i>Signal</a><nav id="nav" aria-label="Sections"></nav></header>
+<aside class="hud rail" id="rail" aria-label="Chapters"></aside>
+<div class="hud corner tl" aria-hidden="true"></div><div class="hud corner br" aria-hidden="true"></div>
+<div class="hud meter" aria-hidden="true"><span id="chname">Verdict</span><b id="pct">000</b><div class="bar"><i id="barfill"></i></div></div>
+
+<main id="app"></main>
+
+<footer class="ch" style="--acc:#5CE1FF" data-key="foot" data-name="Notes" data-acc="#5CE1FF">
+  <div class="wrap foot">
+    <p class="big" aria-hidden="true">Fight Signal<span>Fight Signal</span></p>
+    <div class="foot-row">
+      <p class="fine" id="finefoot"></p>
+      <a class="btn" data-magnet href="https://www.begambleaware.org" target="_blank" rel="noopener">BeGambleAware <span aria-hidden="true">↗</span></a>
+    </div>
+  </div>
+</footer>
+
+<script type="application/json" id="data">__DATA__</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script>
+/* Render from the exported data, then add the motion. Every number on the page is read from the data block. */
+(function () {
+  var D = JSON.parse(document.getElementById('data').textContent);
+  var $ = function (s, r) { return (r || document).querySelector(s); }, $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  var gbp = function (x, signed) { var a = Math.abs(x), s = a >= 100 ? a.toFixed(0) : a.toFixed(2); return (x < 0 ? '-' : (signed && x > 0 ? '+' : '')) + '£' + s; };
+  var pc = function (x, d) { return (x * 100).toFixed(d == null ? 0 : d) + '%'; };
+  var DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var dLabel = function (iso) { var d = new Date(iso + (iso.length === 10 ? 'T12:00:00' : '')); return DAY[d.getDay()] + ' ' + d.getDate() + ' ' + MON[d.getMonth()]; };
+  var tLabel = function (iso) { var d = new Date(iso); return DAY[d.getDay()] + ' ' + d.getDate() + ' ' + MON[d.getMonth()] + ', ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+  var ACCS = ['#FF3D4F', '#2EF2A0', '#FFC21A', '#5CE1FF'], RINGS = ['mma', 'cp', 'rs', 'elo'];
+  var cards = D.cards, first = cards[0];
+  var plural = function (n, w) { return n + ' ' + w + (n === 1 ? '' : 's'); };
+
+  /* ---- hero ---- */
+  var heroVerdict = first.bets ? 'The rule found ' + plural(first.bets, 'small edge') + ' on ' + first.name + ', worth ' + gbp(first.staked) + ' in total.' : 'The rule found nothing worth betting on ' + first.name + '.';
+  var h = '';
+  h += '<section class="ch" id="top" data-key="top" data-name="Verdict" data-acc="#5CE1FF" aria-labelledby="hero-h"><div class="wrap hero"><div class="scanline" aria-hidden="true"></div>';
+  h += '<p class="tag" data-in>MMA predictor, paper desk</p><h1 id="hero-h" data-split><span class="w">Fight</span><span class="w">Signal</span></h1>';
+  h += '<div class="hero-row"><div>';
+  h += '<p class="statement" data-in>Next card: <b style="font-weight:600">' + esc(first.name) + '</b>, ' + dLabel(first.dates[0]) + ', in ' + plural(first.days, 'day') + '. ' + esc(heroVerdict) + '</p>';
+  h += '<div class="tiles">';
+  h += '<div class="panel tile" data-tilt data-in><span class="k">What to bet</span><span class="v">' + plural(first.bets, 'bet') + '</span><span class="s">of ' + first.n_fights + ' fights; ' + first.n_priced + ' have a price so far.</span></div>';
+  h += '<div class="panel tile" data-tilt data-in><span class="k">How much</span><span class="v" data-count="' + first.staked + '" data-fmt="gbp">' + gbp(first.staked) + '</span><span class="s">out of a ' + gbp(D.budget) + ' budget for the card. The rest stays unspent.</span></div>';
+  h += '<div class="panel tile" data-tilt data-in><span class="k">Expected earnings</span><span class="v' + ((first.ev_market || 0) < 0 ? ' neg' : '') + '">' + (first.ev_model == null ? 'n/a' : gbp(first.ev_model, true)) + '</span><span class="s">if the model is right. If the market is right: ' + (first.ev_market == null ? 'n/a' : gbp(first.ev_market, true)) + '.</span></div>';
+  h += '<div class="panel tile" data-tilt data-in><span class="k">Reality check</span><span class="v">~' + gbp(D.backtest.per_card) + '</span><span class="s">a card in past tests of this rule (' + D.backtest.events + ' cards), indistinguishable from zero.</span></div>';
+  h += '</div>';
+  h += '<p class="notice" data-in>Research tool, paper trading only. In every test so far the model has not beaten the betting market, so stakes are kept small. Nothing here is advice to stake money.</p>';
+  h += '</div><div class="slot" data-obj="mma" data-ring="#5CE1FF" role="img" aria-label="An eight-sided fight cage lit in blue"></div></div></div></section>';
+  h += '<div class="marquee" aria-hidden="true"><div class="track">' + [0, 1].map(function () { return cards.map(function (c) { return '<span>' + esc(c.name) + '</span><span>' + c.bets + ' bets, ' + gbp(c.staked) + '</span>'; }).join('') + '<span>Model vs market, ' + D.gap.diff.toFixed(3) + ' behind</span><span>Paper test, ' + D.forward.logged + ' picks logged</span>'; }).join('') + '</div></div>';
+
+  /* ---- results of cards already fought ---- */
+  var RC = ((D.results && D.results.cards) || []).slice().reverse();
+  RC.forEach(function (rc, ri) {
+    var s = rc.stats, key = 'res' + ri, bs = rc.bets_summary, ps = rc.picks_summary, last = function (n) { return n.split(' ').slice(-1)[0]; };
+    var binom = function (n, k) { var c = 1; for (var i = 1; i <= k; i++) c = c * (n - k + i) / i; return c; };
+    var tail = 0; for (var kk = s.model.k; kk <= s.n; kk++) tail += binom(s.n, kk) / Math.pow(2, s.n);
+    var slotName = { thu: 'Thursday', mon: 'Monday', pre: 'pre-fight', listed: 'first-listed', manual: 'manual' }[rc.slot] || rc.slot;
+    var stakes = rc.bets.map(function (b) { return b.stake; });
+    h += '<section class="ch" id="' + key + '" data-key="' + key + '" data-name="Results" data-acc="#2EF2A0" style="--acc:#2EF2A0" aria-labelledby="' + key + '-h"><div class="wrap">';
+    h += '<div class="open"><div><p class="tag" data-in>Graded against real results, ' + dLabel(rc.date) + '</p><h2 id="' + key + '-h" data-in>Results</h2>';
+    h += '<p class="statement" data-in>' + esc(rc.name) + ': the model picked ' + s.model.k + ' of ' + s.n + ' winners (' + pc(s.model.k / s.n) + '). The betting market picked ' + s.market.k + '. The staking rule won ' + bs.won + ' of ' + bs.n + ' bets and finished ' + gbp(bs.pnl, true) + ' on ' + gbp(bs.staked) + ' staked.</p>';
+    h += '<p class="what" data-in>Each fight is scored on the last capture before the card (' + slotName + '), so probabilities and prices are what was on offer then.' + (rc.missing.length ? ' Not scored, no result in the data: ' + esc(rc.missing.join(', ')) + '.' : '') + '</p></div>';
+    h += '<div class="slot" data-obj="chips" data-stakes="' + stakes.join(',') + '" data-ring="#2EF2A0" role="img" aria-label="Chips stacked by the stake on each bet"></div></div><div class="block">';
+    h += '<div class="stats">';
+    [['Model alone', s.model], ['Blend', s.blend], ['Market', s.market], ['Elo', s.elo]].forEach(function (m) {
+      h += '<div class="panel tile" data-tilt data-in><span class="k">' + m[0] + '</span><span class="v">' + m[1].k + '/' + m[1].n + '</span><span class="s">' + pc(m[1].k / m[1].n) + ' right. A 95% range for the true rate: ' + pc(m[1].ci[0]) + ' to ' + pc(m[1].ci[1]) + '.</span></div>';
+    });
+    h += '</div>';
+    h += '<div class="twocol"><div class="panel" data-in><p class="tag">How sure, how right</p><h3>Accuracy</h3><div class="accs" style="margin-top:22px">';
+    [['Model alone', s.model], ['Blend', s.blend], ['Market', s.market], ['Elo', s.elo]].forEach(function (m) {
+      h += '<div class="accrow"><span class="lb">' + m[0] + '</span><div class="accbar"><i class="rng" style="left:' + (m[1].ci[0] * 100) + '%;width:' + ((m[1].ci[1] - m[1].ci[0]) * 100) + '%"></i><i class="dot" style="left:' + (m[1].k / m[1].n * 100) + '%"></i><i class="coin"></i></div><span class="val">' + m[1].k + '/' + m[1].n + '</span></div>';
+    });
+    h += '</div><p class="cap" style="margin-top:14px">Dot: share right. Band: 95% range. Line: a coin flip (50%).</p></div>';
+    h += '<div class="panel" data-in><p class="tag">Probability quality</p><h3>Log loss, lower is better</h3><table style="margin-top:14px"><tbody>';
+    [['Model alone', s.ll.model, s.brier.model], ['Blend', s.ll.blend, s.brier.blend], ['Market', s.ll.market, s.brier.market], ['Elo', s.ll.elo, s.brier.elo], ['Coin flip', s.ll.coin, 0.25]].forEach(function (r) { h += '<tr><td>' + r[0] + '</td><td>' + r[1].toFixed(3) + '</td><td class="cap">Brier ' + r[2].toFixed(3) + '</td></tr>'; });
+    h += '</tbody></table><p class="cap" style="margin-top:14px">When the model and market disagreed (' + s.disagree.n + ' fights): model right ' + s.disagree.model_right + ', market right ' + s.disagree.market_right + '.</p></div></div>';
+    h += '<div class="panel" data-in><p class="tag">Calibration</p><h3>Did confidence match results?</h3><table style="margin-top:14px"><thead><tr><th>Model confidence</th><th>Fights</th><th>Said</th><th>Right</th></tr></thead><tbody>';
+    s.buckets.forEach(function (b) { h += '<tr><td>' + b.name + '</td><td>' + b.n + '</td><td>' + (b.said == null ? '' : pc(b.said)) + '</td><td>' + (b.n ? b.hit + '/' + b.n + ' (' + pc(b.hit / b.n) + ')' : '') + '</td></tr>'; });
+    h += '</tbody></table></div>';
+    h += '<div><div class="sec-head" data-in><div><p class="tag">Fight by fight</p><h3>Who won, who called it</h3></div></div><div class="fights" style="margin-top:18px">';
+    rc.fights.forEach(function (x) {
+      var bet = rc.bets.filter(function (b) { return b.fighter === x.a || b.fighter === x.b; })[0], loser = x.winner === x.a ? x.b : x.a;
+      var mk = function (lbl, pick, ok) { return pick == null ? '' : '<span class="pk ' + (ok ? 'ok' : 'no') + '">' + lbl + ' ' + esc(last(pick)) + ' ' + (ok ? 'right' : 'wrong') + '</span>'; };
+      h += '<article class="panel fight" data-tilt data-in><div class="names"><b><span class="win">' + esc(x.winner) + '</span><em>beat</em>' + esc(loser) + '</b><span class="meta">' + esc(x.method) + ', round ' + x.round + '</span></div>';
+      h += '<div class="picks2">' + mk('Model', x.pick_model, x.ok_model) + mk('Blend', x.pick_blend, x.ok_blend) + mk('Market', x.pick_mkt, x.ok_mkt) + mk('Elo', x.pick_elo, x.ok_elo) + '</div>';
+      h += bet ? '<div class="verdict"><span class="chip ' + (bet.status === 'won' ? 'bet' : 'pass') + '">' + (bet.status === 'won' ? 'Bet won' : 'Bet lost') + '</span><span class="why"><b>' + esc(bet.fighter) + '</b> at ' + bet.price.toFixed(2) + ', staked ' + gbp(bet.stake) + ': ' + gbp(bet.pnl, true) + '.</span></div>' : '<div class="verdict"><span class="chip pass">No bet</span></div>';
+      h += '</article>';
+    });
+    h += '</div></div>';
+    h += '<div class="twocol"><div class="panel" data-in><p class="tag">Money</p><h3>The bets</h3><table style="margin-top:14px"><thead><tr><th>Bet</th><th>Price</th><th>Staked</th><th>Result</th></tr></thead><tbody>';
+    rc.bets.forEach(function (b) { h += '<tr><td>' + esc(b.fighter) + '</td><td>' + b.price.toFixed(2) + '</td><td>' + gbp(b.stake) + '</td><td>' + (b.status === 'won' ? 'won ' : 'lost ') + gbp(b.pnl, true) + '</td></tr>'; });
+    h += '<tr class="final"><td>Total</td><td></td><td>' + gbp(bs.staked) + '</td><td>' + gbp(bs.pnl, true) + '</td></tr></tbody></table><p class="cap" style="margin-top:14px">At a ' + gbp(1000) + ' budget the same bets staked ' + gbp(bs.staked_1000) + ' and finished ' + gbp(bs.pnl_1000, true) + ' (' + (bs.pnl_1000 / 1000 * 100).toFixed(2) + '% of the budget).</p></div>';
+    h += '<div class="panel" data-in><p class="tag">Paper test</p><h3>Confident picks</h3><div class="picks" style="margin-top:20px">';
+    rc.picks.forEach(function (p) { h += '<div class="pickrow"><span><b>' + esc(p.fighter) + '</b> over ' + esc(p.vs) + '<span class="tier">' + esc(p.tier) + '</span></span><span class="cap">' + (p.status === 'won' ? 'won' : 'lost') + ' ' + gbp(p.pnl, true) + ' on ' + gbp(10) + ' paper at ' + p.price.toFixed(2) + '</span></div>'; });
+    if (!rc.picks.length) h += '<p class="cap">No pick at 70% or more on this card.</p>';
+    h += '</div><p class="what" style="margin-top:18px;color:var(--mist);font-size:.92rem">' + ps.won + ' of ' + ps.n + ' won. Far too few to judge: the test needs ' + D.forward.needed + ' graded picks.</p></div></div>';
+    h += '<div class="notice" data-in>' + s.n + ' fights is far too few to tell skill from luck. A coin flip picks ' + s.model.k + ' or more of ' + s.n + ' right ' + pc(tail) + ' of the time, and the 95% range for the model\'s true accuracy runs from ' + pc(s.model.ci[0]) + ' to ' + pc(s.model.ci[1]) + '. The market was ahead on probability quality here, as it has been in every past test.</div>';
+    h += '</div></div></section><div class="wrap"><div class="divider" data-line></div></div>';
+  });
+
+  /* ---- one chapter per card ---- */
+  cards.forEach(function (c, ci) {
+    var acc = ACCS[ci % ACCS.length], ring = acc, key = 'c' + ci;
+    var stakes = c.fights.filter(function (f) { return f.bet; }).map(function (f) { return f.bet.stake; });
+    var dateTxt = c.dates.length > 1 ? dLabel(c.dates[0]) + ' and ' + dLabel(c.dates[1]) : dLabel(c.dates[0]);
+    var verdict = c.bets ? 'Bet ' + plural(c.bets, 'fight') + ' for ' + gbp(c.staked) + '. Pass on the rest.' : (c.n_priced < c.n_fights ? 'No bets yet. ' + (c.n_fights - c.n_priced) + ' of ' + c.n_fights + ' fights have no price.' : 'Pass on every fight.');
+    h += '<section class="ch" id="' + key + '" data-key="' + key + '" data-name="' + esc(c.name) + '" data-acc="' + acc + '" style="--acc:' + acc + '" aria-labelledby="' + key + '-h"><div class="wrap">';
+    h += '<div class="open' + (ci % 2 ? ' flip' : '') + '"><div><p class="tag" data-in>Card ' + (ci + 1) + ' of ' + cards.length + ', ' + dateTxt + '</p><h2 id="' + key + '-h" data-in>' + esc(c.name) + '</h2>';
+    h += '<p class="statement" data-in>' + esc(verdict) + '</p><p class="what" data-in>' + plural(c.n_fights, 'fight') + ' announced, ' + c.n_priced + ' priced at sportsbooks. The model\'s data runs to ' + dLabel(c.last_data) + '.</p></div>';
+    h += '<div class="slot" data-obj="chips" data-stakes="' + stakes.join(',') + '" data-ring="' + ring + '" role="img" aria-label="Poker chips stacked in proportion to each stake"></div></div>';
+    h += '<div class="block">';
+    h += '<div class="stats">';
+    h += '<div class="panel tile" data-tilt data-in><span class="k">Staked</span><span class="v">' + gbp(c.staked) + '</span><span class="s">across ' + plural(c.bets, 'bet') + ', budget ' + gbp(D.budget) + '</span></div>';
+    h += '<div class="panel tile" data-tilt data-in><span class="k">Earnings if the model is right</span><span class="v">' + (c.ev_model == null ? 'n/a' : gbp(c.ev_model, true)) + '</span><span class="s">average over 20,000 simulated outcomes</span></div>';
+    h += '<div class="panel tile" data-tilt data-in><span class="k">Earnings if the market is right</span><span class="v' + ((c.ev_market || 0) < 0 ? ' neg' : '') + '">' + (c.ev_market == null ? 'n/a' : gbp(c.ev_market, true)) + '</span><span class="s">same bets, market probabilities</span></div>';
+    h += '<div class="panel tile" data-tilt data-in><span class="k">Chance of a profit</span><span class="v">' + (c.sim_model ? pc(c.sim_model.p_profit) : 'n/a') + '</span><span class="s">' + (c.sim_market ? 'market view: ' + pc(c.sim_market.p_profit) + '. ' : '') + (c.sim_model ? '5th to 95th percentile ' + gbp(c.sim_model.p05, true) + ' to ' + gbp(c.sim_model.p95, true) : 'no bets to simulate') + '</span></div>';
+    h += '</div>';
+    if (c.sim_model) {
+      h += '<div class="panel" data-in><div class="sec-head"><div><p class="tag">Outcomes</p><h3>What the card could pay</h3></div><div class="legend"><span><i class="m"></i>if the model is right</span><span><i></i>if the market is right</span></div></div><div style="margin-top:18px"><svg class="chart" id="hist-' + ci + '" viewBox="0 0 640 200" role="img" aria-label="Distribution of the card\'s profit"></svg></div></div>';
+    }
+    h += '<div><div class="sec-head" data-in><div><p class="tag">What to bet</p><h3>Fight by fight</h3></div><div class="legend"><span><i class="m"></i>model</span><span><i class="b"></i>blended</span><span><i></i>market</span></div></div><div class="fights" style="margin-top:18px">';
+    c.fights.forEach(function (f) {
+      var b = f.bet, mk = f.p_mkt;
+      h += '<article class="panel fight" data-tilt data-in><div class="names"><b>' + esc(f.a) + '<em>vs</em>' + esc(f.b) + '</b><span class="meta">' + esc(f.wc) + (f.wc_known ? '' : ' (guessed)') + ', ' + f.rounds + ' rounds</span></div>';
+      h += '<div><div class="tug" style="--mk:' + (mk == null ? 50 : mk * 100) + '%"><span class="track"></span>' + (mk == null ? '' : '<span class="fill"></span>') + (mk == null ? '' : '<span class="mk" style="--x:' + (mk * 100) + '%"></span>') + '<span class="mk blend" style="--x:' + (f.p_blend * 100) + '%"></span><span class="mk model" style="--x:' + (f.p_model * 100) + '%"></span></div>';
+      h += '<div class="nums-row"><span>' + esc(f.a.split(' ').slice(-1)[0]) + ' <b>' + pc(f.p_model) + '</b> model</span><span><b>' + pc(f.p_blend) + '</b> blend</span><span>' + (mk == null ? 'no market yet' : '<b>' + pc(mk) + '</b> market') + '</span></div></div>';
+      if (b) {
+        h += '<div class="verdict"><span class="chip bet">Bet ' + gbp(b.stake) + '</span><span class="why"><b>' + esc(b.fighter) + '</b> at ' + b.price.toFixed(2) + ' (' + esc(b.book) + '). Edge ' + (b.edge >= 0 ? '+' : '') + (b.edge * 100).toFixed(1) + '%, worth ' + gbp(b.stake * b.edge, true) + ' if the model is right.' + (b.thin ? ' Thin data, stake halved.' : '') + '</span></div>';
+      } else {
+        h += '<div class="verdict"><span class="chip pass">Pass</span><span class="why">' + esc(f.why_pass) + '.</span></div>';
+      }
+      h += '<details class="more"><summary>The model\'s reasons</summary><div class="more-body">';
+      h += '<span><em>Leans</em>' + esc(f.pick.fighter) + ' (' + pc(f.pick.conf) + ')</span><span><em>Elo</em>' + pc(f.p_elo) + ' for ' + esc(f.a.split(' ').slice(-1)[0]) + '</span><span><em>Goes the distance</em>' + pc(f.dist) + '</span>';
+      f.drivers.forEach(function (d) { h += '<span><em>Driver</em>' + esc(d[0]) + ' (' + (d[1] >= 0 ? '+' : '') + d[1] + ' pts)</span>'; });
+      f.flags.forEach(function (fl) { h += '<span><em>Flag</em>' + esc(fl) + '</span>'; });
+      if (f.best_a) h += '<span><em>Best prices</em>' + esc(f.a.split(' ').slice(-1)[0]) + ' ' + f.best_a.toFixed(2) + ' (' + esc(f.best_a_book) + '), ' + esc(f.b.split(' ').slice(-1)[0]) + ' ' + f.best_b.toFixed(2) + ' (' + esc(f.best_b_book) + ')</span>';
+      h += '</div></details></article>';
+    });
+    h += '</div></div>';
+    h += '<div class="twocol"><div class="panel" data-in><p class="tag">When to bet</p><h3>Capture schedule</h3><div class="timeline" style="margin-top:26px">';
+    [['listed', 'Listed', null], ['mon', 'Monday', c.slots.mon.time], ['thu', 'Thursday', c.slots.thu.time], ['pre', 'Before the fights', c.slots.pre.time]].forEach(function (s) {
+      var st = c.slots[s[0]].status;
+      h += '<div class="node ' + st + '"><b>' + s[1] + '</b><span class="t">' + (s[2] ? tLabel(s[2]) : 'when first seen') + '</span><span class="st">' + ({ done: 'captured', missed: 'missed', upcoming: 'upcoming', due: 'due now', retry: 'retrying', gave: 'gave up' }[st] || st) + '</span></div>';
+    });
+    h += '</div><p class="what" style="margin-top:22px;color:var(--mist);font-size:.95rem">No timing edge has been found. The only profit in the data sat in the very first line, gone by mid-week, and the closing price is the most accurate. If you act at all, compare every book you can use and take the best price.</p></div>';
+    h += '<div class="panel" data-in><p class="tag">Paper test</p><h3>Confident picks</h3><div class="picks" style="margin-top:20px">';
+    if (c.picks.length) c.picks.forEach(function (p) { h += '<div class="pickrow"><span><b>' + esc(p.fighter) + '</b> over ' + esc(p.vs) + '<span class="tier">' + esc(p.tier) + '</span></span><span class="cap">' + pc(p.conf) + ' sure, ' + p.price.toFixed(2) + ' at ' + esc(p.book) + ', ' + gbp(p.stake) + ' paper</span></div>'; });
+    else h += '<p class="cap">No pick at 70% confidence or more with a price.</p>';
+    h += '</div><p class="what" style="margin-top:18px;color:var(--mist);font-size:.92rem">Unproven: this rule looked good in past data, found after the fact. It is being checked on cards not yet fought.</p></div></div>';
+    h += '</div></div></section><div class="wrap"><div class="divider" data-line></div></div>';
+  });
+
+  /* ---- evidence ---- */
+  h += '<section class="ch" id="evidence" data-key="ev" data-name="Evidence" data-acc="#5CE1FF" style="--acc:#5CE1FF" aria-labelledby="ev-h"><div class="wrap"><div class="open flip"><div class="slot" data-obj="elo" data-ring="#5CE1FF" role="img" aria-label="A three-step podium with gold, silver and bronze trophies"></div><div>';
+  h += '<p class="tag" data-in>Does it work?</p><h2 id="ev-h" data-in>The track record</h2><p class="statement" data-in>Not yet. Over ' + D.gap.n.toLocaleString('en-GB') + ' past fights the model is ' + D.gap.diff.toFixed(3) + ' worse than the betting market (95% range ' + D.gap.lo.toFixed(3) + ' to ' + D.gap.hi.toFixed(3) + ').</p>';
+  h += '<p class="what" data-in>Every way of betting its picks that was tested lands near zero once the bookmaker\'s margin is paid. The lines below show the return on money staked, with the range that fits the data.</p></div></div>';
+  h += '<div class="block"><div class="panel" data-in><div class="sec-head"><div><p class="tag">Return on stake</p><h3>What each test returned</h3></div><div class="legend"><span><i class="m"></i>plain test</span><span><i style="border-color:var(--amber)"></i>found after the fact</span><span><i style="border-color:var(--bad)"></i>price not available</span></div></div><div style="margin-top:20px"><svg class="chart" id="evchart" viewBox="0 0 720 ' + (D.evidence.length * 44 + 40) + '" role="img" aria-label="Return on stake for each test, with 95% ranges"></svg></div></div>';
+  h += '<div class="stats"><div class="panel tile" data-tilt data-in><span class="k">Forward test</span><span class="v">' + D.forward.graded + '/' + D.forward.needed + '</span><span class="s">graded picks. ' + D.forward.logged + ' logged so far; real money only after enough are graded and positive.</span></div>';
+  h += '<div class="panel tile" data-tilt data-in><span class="k">Model vs market</span><span class="v neg">+' + D.gap.diff.toFixed(3) + '</span><span class="s">log loss behind the market, lower is better. Model ' + D.gap.model_ll.toFixed(3) + ', market ' + D.gap.market_ll.toFixed(3) + '.</span></div>';
+  h += '<div class="panel tile" data-tilt data-in><span class="k">This rule, past cards</span><span class="v">' + (D.backtest.roi >= 0 ? '+' : '') + D.backtest.roi + '%</span><span class="s">on money staked, ' + D.backtest.events + ' cards, range ' + D.backtest.lo + '% to +' + D.backtest.hi + '%.</span></div>';
+  h += '<div class="panel tile" data-tilt data-in><span class="k">Stop rule</span><span class="v">Fixed</span><span class="s">If nothing survives forward testing, the betting work stops.</span></div></div></div></div></section><div class="wrap"><div class="divider" data-line></div></div>';
+
+  /* ---- the rule ---- */
+  h += '<section class="ch" id="rule" data-key="rule" data-name="The rule" data-acc="#FFC21A" style="--acc:#FFC21A" aria-labelledby="rule-h"><div class="wrap"><div class="block" style="padding-top:var(--gap)"><div class="twocol"><div class="prose"><p class="tag" data-in>How stakes are set</p><h3 id="rule-h" data-in>Why the stakes are so small</h3>';
+  h += '<p data-in>The model alone disagrees with the market more than it should be trusted to. So each probability is blended with the market\'s before any money is risked, which pulls most edges back toward zero.</p><p data-in>What is left is small, and a fighter with thin data or a big gap to the market is halved again. That is why a ' + gbp(D.budget) + ' card stakes only part of it. Staking the whole budget was tested and is not used: it lost the full ' + gbp(D.budget) + ' on some past cards without earning more.</p></div>';
+  h += '<ol class="flow"><li data-in>Blend the model with the market to get a probability for each side.</li><li data-in>Compare it with the best sportsbook price. Bet only if the edge is above ' + (D.edge_min * 100).toFixed(0) + '%.</li><li data-in>Stake ' + ({ 1: 'the full', 0.5: 'half the', 0.25: 'a quarter of the' }[D.kelly] || (D.kelly * 100).toFixed(0) + '% of the') + ' Kelly amount, halved for thin data and for a gap above 15 points.</li><li data-in>Cap each fight at ' + (D.cap * 100).toFixed(0) + '% of the budget and scale the card down to ' + gbp(D.budget) + '.</li></ol></div></div></div></section>';
+  $('#app').innerHTML = h;
+  $('#finefoot').textContent = 'Built ' + dLabel(D.asof.slice(0, 10)) + ' from the model\'s own output and live sportsbook prices read on that day; prices move. Paper trading only, not financial advice. You must be 18 or over to gamble; if it stops being fun, help is available.';
+
+  /* nav and rail */
+  var chapters = [{ id: 'top', key: 'top', name: 'Verdict' }].concat(RC.map(function (rc, i) { return { id: 'res' + i, key: 'res' + i, name: 'Results' }; }), cards.map(function (c, i) { return { id: 'c' + i, key: 'c' + i, name: c.name }; }), [{ id: 'evidence', key: 'ev', name: 'Evidence' }, { id: 'rule', key: 'rule', name: 'The rule' }]);
+  $('#nav').innerHTML = '<span class="live">Prices read ' + dLabel(D.asof.slice(0, 10)) + '</span>' + RC.map(function (rc, i) { return '<a href="#res' + i + '" data-scramble>Results</a>'; }).join('') + cards.map(function (c, i) { return '<a href="#c' + i + '" data-scramble>' + esc(c.name) + '</a>'; }).join('') + '<a href="#evidence" data-scramble>Evidence</a>';
+  $('#rail').innerHTML = chapters.map(function (c) { return '<a href="#' + c.id + '" data-key="' + c.key + '"><span>' + esc(c.name) + '</span></a>'; }).join('');
+
+  /* ---- the bar at the top: a 1,000 budget per event, projected from the cards ahead and realised from settled paper bets ---- */
+  function renderBar(B) {
+    var budget = B.per_event, up = B.upcoming, re = B.realised, base = Math.max(1, up.events) * budget;
+    var sp = function (v, b) { return (v >= 0 ? '+' : '-') + (Math.abs(v) / b * 100).toFixed(2) + '%'; }, cls = function (v) { return v < 0 ? 'neg' : 'pos'; };
+    var s = '<span class="seg"><i class="dot"></i>Live, ' + gbp(budget) + ' an event</span>';
+    s += '<span class="seg"><em>Ahead</em> ' + plural(up.events, 'event') + ', ' + gbp(up.staked) + ' staked<span>model right <b class="' + cls(up.ev_model) + '">' + gbp(up.ev_model, true) + ' (' + sp(up.ev_model, base) + ')</b></span><span>market right <b class="' + cls(up.ev_market) + '">' + gbp(up.ev_market, true) + ' (' + sp(up.ev_market, base) + ')</b></span></span>';
+    s += '<span class="seg"><em>Settled</em> ' + (re.events ? plural(re.events, 'event') + ' <b class="' + cls(re.profit) + '">' + gbp(re.profit, true) + ' (' + sp(re.profit, re.events * budget) + ')</b>' : 'none yet' + (re.awaiting ? ', ' + re.awaiting + ' bets awaiting results' : (re.first ? ', first ' + dLabel(re.first) : ''))) + '</span>';
+    $('#pbar').innerHTML = s;
+  }
+  renderBar(D.bar);
+  var lastAsof = D.asof;
+  function poll() {
+    fetch('data.json?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (nd) {
+      if (nd && nd.bar && nd.asof !== lastAsof) { lastAsof = nd.asof; renderBar(nd.bar); var b = $('#pbar'); b.classList.add('flash'); setTimeout(function () { b.classList.remove('flash'); }, 1600); }
+    }).catch(function () { /* no data file beside the page, or offline: the bar keeps what it has */ });
+  }
+  setInterval(poll, 30000);
+
+  /* ---- charts ---- */
+  cards.forEach(function (c, ci) {
+    var svg = $('#hist-' + ci); if (!svg || !c.sim_model) return;
+    var m = c.sim_model, k = c.sim_market, W = 640, H = 200, padB = 28, edges = m.edges, n = m.counts.length, top = Math.max.apply(null, m.counts.concat(k.counts));
+    var x = function (v) { return (v - edges[0]) / (edges[edges.length - 1] - edges[0]) * W; }, y = function (v) { return (H - padB) - v / top * (H - padB - 8); };
+    var out = '<g class="grid">' + [0.25, 0.5, 0.75, 1].map(function (f) { return '<line x1="0" x2="' + W + '" y1="' + y(top * f) + '" y2="' + y(top * f) + '"/>'; }).join('') + '</g>';
+    for (var i = 0; i < n; i++) {
+      var bw = x(edges[i + 1]) - x(edges[i]) - 2;
+      out += '<rect class="bar-m" x="' + (x(edges[i]) + 1) + '" y="' + y(m.counts[i]) + '" width="' + bw + '" height="' + ((H - padB) - y(m.counts[i])) + '"/>';
+      out += '<rect class="bar-k" x="' + (x(edges[i]) + 1) + '" y="' + y(k.counts[i]) + '" width="' + bw + '" height="' + ((H - padB) - y(k.counts[i])) + '"/>';
+    }
+    out += '<line class="zero" x1="' + x(0) + '" x2="' + x(0) + '" y1="4" y2="' + (H - padB) + '"/><text x="' + x(0) + '" y="' + (H - 8) + '" text-anchor="middle">£0</text>';
+    out += '<text x="0" y="' + (H - 8) + '">' + gbp(edges[0], true) + '</text><text x="' + W + '" y="' + (H - 8) + '" text-anchor="end">' + gbp(edges[edges.length - 1], true) + '</text>';
+    svg.innerHTML = out;
+  });
+  var ev = $('#evchart');
+  if (ev) {
+    var W2 = 720, rowH = 44, left = 250, right = W2 - 20, lo = -25, hi = 25, X = function (v) { return left + (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * (right - left); };
+    var o = '<g class="grid">' + [-20, -10, 0, 10, 20].map(function (v) { return '<line x1="' + X(v) + '" x2="' + X(v) + '" y1="6" y2="' + (D.evidence.length * rowH + 6) + '"/><text x="' + X(v) + '" y="' + (D.evidence.length * rowH + 26) + '" text-anchor="middle">' + (v > 0 ? '+' : '') + v + '%</text>'; }).join('') + '</g><line class="zero" x1="' + X(0) + '" x2="' + X(0) + '" y1="6" y2="' + (D.evidence.length * rowH + 6) + '"/>';
+    D.evidence.forEach(function (e, i) {
+      var cy = 6 + i * rowH + rowH / 2, colr = e.kind === 'lead' ? 'var(--amber)' : (e.kind === 'untradable' ? 'var(--bad)' : 'var(--acc)');
+      var words = e.label.length > 34 ? [e.label.slice(0, e.label.lastIndexOf(' ', 34)), e.label.slice(e.label.lastIndexOf(' ', 34) + 1)] : [e.label];
+      o += '<text class="lab" x="0" y="' + (cy - (words.length > 1 ? 4 : -4)) + '">' + esc(words[0]) + '</text>' + (words.length > 1 ? '<text class="lab" x="0" y="' + (cy + 12) + '">' + esc(words[1]) + '</text>' : '');
+      o += '<g class="wh"><line x1="' + X(e.lo) + '" x2="' + X(e.hi) + '" y1="' + cy + '" y2="' + cy + '" stroke="' + colr + '" stroke-width="2" ' + (e.kind === 'untradable' ? 'stroke-dasharray="5 4"' : '') + '/><line x1="' + X(e.lo) + '" x2="' + X(e.lo) + '" y1="' + (cy - 6) + '" y2="' + (cy + 6) + '" stroke="' + colr + '" stroke-width="2"/><line x1="' + X(e.hi) + '" x2="' + X(e.hi) + '" y1="' + (cy - 6) + '" y2="' + (cy + 6) + '" stroke="' + colr + '" stroke-width="2"/></g>';
+      o += '<circle cx="' + X(e.v) + '" cy="' + cy + '" r="5.5" fill="' + colr + '"><title>' + esc(e.label) + ': ' + e.v + '% (' + e.lo + '% to ' + e.hi + '%), ' + esc(e.n) + '</title></circle>';
+    });
+    ev.innerHTML = o;
+  }
+
+  /* ---- motion ---- */
+  var reduce = false; try { reduce = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+  var root = document.documentElement, chName = $('#chname'), pct = $('#pct'), bar = $('#barfill'), current = '';
+  var GL = '01<>/\\|+*#%&=-_';
+  function scramble(el, text, ms) {
+    if (reduce) { el.textContent = text; return; }
+    var t0 = performance.now(); ms = ms || 600; cancelAnimationFrame(el.__s);
+    (function step(now) {
+      var k = Math.min(1, (now - t0) / ms), out = '';
+      for (var i = 0; i < text.length; i++) out += (text[i] === ' ' || i < text.length * k) ? text[i] : GL[Math.floor(Math.random() * GL.length)];
+      el.textContent = out; if (k < 1) el.__s = requestAnimationFrame(step); else el.textContent = text;
+    })(t0);
+  }
+  function setChapter(el) {
+    var key = el.dataset.key; if (key === current) return; current = key;
+    root.style.setProperty('--acc', el.dataset.acc || '#5CE1FF');
+    $$('.rail a').forEach(function (a) { a.classList.toggle('on', a.dataset.key === key); });
+    if (chName) scramble(chName, el.dataset.name || 'Verdict', 500);
+    window.dispatchEvent(new CustomEvent('chapter', { detail: { hex: el.dataset.acc || '#5CE1FF', key: key } }));
+  }
+  function readout() {
+    var hh = document.documentElement.scrollHeight - innerHeight, p = hh > 0 ? Math.min(1, Math.max(0, scrollY / hh)) : 0;
+    if (pct) pct.textContent = String(Math.round(p * 100)).padStart(3, '0');
+    if (bar) bar.parentNode.style.setProperty('--p', p.toFixed(4)), bar.style.setProperty('--p', p.toFixed(4));
+    window.__scroll = scrollY;
+  }
+  addEventListener('scroll', readout, { passive: true }); readout();
+  $$('[data-scramble]').forEach(function (a) { var t = a.textContent; a.addEventListener('pointerenter', function () { scramble(a, t, 450); }); });
+  var cur = $('.cur'), dot = $('.cur-dot'), mx = innerWidth / 2, my = innerHeight / 2, cx = mx, cy = my, fine = false;
+  try { fine = matchMedia('(hover: hover) and (pointer: fine)').matches; } catch (e) {}
+  addEventListener('pointermove', function (e) { mx = e.clientX; my = e.clientY; window.__px = mx / innerWidth - .5; window.__py = my / innerHeight - .5; if (fine && dot) dot.style.transform = 'translate(' + mx + 'px,' + my + 'px)'; }, { passive: true });
+  if (fine && cur) {
+    cur.style.opacity = 1; dot.style.opacity = 1;
+    (function loop() { cx += (mx - cx) * .16; cy += (my - cy) * .16; cur.style.transform = 'translate(' + cx + 'px,' + cy + 'px)'; requestAnimationFrame(loop); })();
+    $$('a, button, summary, .slot, [data-tilt]').forEach(function (el) { el.addEventListener('pointerenter', function () { cur.classList.add('big'); }); el.addEventListener('pointerleave', function () { cur.classList.remove('big'); }); });
+  }
+  if (!reduce) {
+    $$('[data-magnet]').forEach(function (b) { b.addEventListener('pointermove', function (e) { var r = b.getBoundingClientRect(); b.style.transform = 'translate(' + ((e.clientX - r.left - r.width / 2) * .25) + 'px,' + ((e.clientY - r.top - r.height / 2) * .35) + 'px)'; }); b.addEventListener('pointerleave', function () { b.style.transform = ''; }); });
+    $$('[data-tilt]').forEach(function (p) {
+      p.addEventListener('pointermove', function (e) { var r = p.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height; p.style.setProperty('--mx', (x * 100) + '%'); p.style.setProperty('--my', (y * 100) + '%'); p.style.transform = 'perspective(800px) rotateX(' + ((.5 - y) * 4) + 'deg) rotateY(' + ((x - .5) * 6) + 'deg)'; });
+      p.addEventListener('pointerleave', function () { p.style.transform = ''; });
+    });
+  }
+  if (reduce || typeof gsap === 'undefined' || typeof ScrollTrigger === 'undefined') {
+    $$('.ch[data-key]').forEach(function (el) { new IntersectionObserver(function (en) { if (en[0].isIntersecting) setChapter(el); }, { rootMargin: '-45% 0px -45% 0px' }).observe(el); });
+    return;
+  }
+  gsap.registerPlugin(ScrollTrigger);
+  $$('.ch[data-key]').forEach(function (el) { ScrollTrigger.create({ trigger: el, start: 'top 55%', end: 'bottom 55%', onToggle: function (s) { if (s.isActive) setChapter(el); } }); });
+  setChapter({ dataset: { key: 'top', name: 'Verdict', acc: '#5CE1FF' } });
+  var h1 = $('[data-split]'), letters = [];
+  if (h1) $$('.w', h1).forEach(function (w) { var t = w.textContent; w.textContent = ''; w.style.overflow = 'hidden'; t.split('').forEach(function (ch) { var s = document.createElement('span'); s.className = 'c'; s.textContent = ch; w.appendChild(s); letters.push(s); }); });
+  var tl = gsap.timeline({ defaults: { ease: 'expo.out' }, onComplete: function () { $$('.hero h1 .w').forEach(function (w) { w.style.overflow = 'visible'; }); } });
+  tl.from(letters, { yPercent: 115, rotate: 7, duration: 1.25, stagger: .04 }, .1)
+    .fromTo('.scanline', { opacity: 1, y: 0 }, { y: function () { var hh = $('.hero'); return hh ? hh.offsetHeight : 600; }, duration: 1.7, ease: 'power2.inOut' }, .2)
+    .to('.scanline', { opacity: 0, duration: .3 }, '>-0.2')
+    .from('.hero [data-in]', { y: 28, opacity: 0, duration: 1, stagger: .1 }, .55)
+    .from('.hud', { opacity: 0, duration: 1 }, .4);
+  var groups = new Map();
+  $$('[data-in]').forEach(function (el) { if (el.closest('.hero')) return; var key = el.closest('.open, .stats, .fights, .twocol, .block, .foot') || document.body; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(el); });
+  groups.forEach(function (els, key) { gsap.from(els, { y: 36, opacity: 0, duration: 1.05, ease: 'expo.out', stagger: .07, scrollTrigger: { trigger: key, start: 'top 88%', once: true } }); });
+  $$('h2[data-in]').forEach(function (hh) { var t = hh.textContent; ScrollTrigger.create({ trigger: hh, start: 'top 88%', once: true, onEnter: function () { scramble(hh, t, 800); } }); });
+  $$('[data-line]').forEach(function (l) { gsap.from(l, { scaleX: 0, duration: 1.4, ease: 'expo.inOut', scrollTrigger: { trigger: l, start: 'top 92%', once: true } }); });
+  $$('.chart .bar-m, .chart .bar-k').forEach(function (b) { });
+  $$('svg.chart').forEach(function (s) {
+    var bars = $$('.bar-m, .bar-k', s), wh = $$('.wh', s);
+    if (bars.length) gsap.from(bars, { scaleY: 0, duration: 1.1, ease: 'expo.out', stagger: .02, scrollTrigger: { trigger: s, start: 'top 85%', once: true } });
+    if (wh.length) gsap.from(wh, { scaleX: 0, duration: 1.2, ease: 'expo.out', stagger: .06, scrollTrigger: { trigger: s, start: 'top 85%', once: true } });
+  });
+  $$('.tug').forEach(function (t) { gsap.from($$('.fill', t), { scaleX: 0, duration: 1.2, ease: 'expo.out', scrollTrigger: { trigger: t, start: 'top 92%', once: true } }); });
+  $$('[data-count]').forEach(function (b) {
+    var target = parseFloat(b.dataset.count), o = { v: 0 };
+    ScrollTrigger.create({ trigger: b, start: 'top 95%', once: true, onEnter: function () { gsap.to(o, { v: target, duration: 1.6, ease: 'power3.out', onUpdate: function () { b.textContent = gbp(o.v); } }); } });
+  });
+  var big = $('.foot .big');
+  if (big) ScrollTrigger.create({ trigger: big, start: 'top 95%', end: 'bottom 55%', scrub: true, onUpdate: function (s) { big.style.setProperty('--fill', (s.progress * 100).toFixed(1) + '%'); } });
+})();
+</script>
+
+<script type="module">
+/* The world behind the page: one renderer, one orthographic camera in screen pixels. Each slot gets a lit, bloomed object standing on a glass floor.
+   If anything here fails to load the page is unchanged apart from the empty slots. */
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+try {
+  const canvas = document.getElementById('stage');
+  const slots = Array.from(document.querySelectorAll('.slot[data-obj]'));
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  if (!renderer.getContext()) throw new Error('no webgl');
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.95;
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x04050a);
+  const pm = new THREE.PMREMGenerator(renderer); scene.environment = pm.fromScene(new RoomEnvironment(), 0.03).texture;
+  const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, -5000, 5000); cam.position.z = 1000;
+  scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x10121a, 0.3));
+  const key = new THREE.DirectionalLight(0xffffff, 1.3); key.position.set(0.5, 0.9, 0.8); scene.add(key);
+  const rimL = new THREE.DirectionalLight(0x8fb4ff, 0.9); rimL.position.set(-0.8, 0.35, -0.6); scene.add(rimL);
+  const composer = new EffectComposer(renderer); composer.addPass(new RenderPass(scene, cam));
+  const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.34, 0.55, 0.9); composer.addPass(bloom); composer.addPass(new OutputPass());
+
+  const col = (h, k = 1) => new THREE.Color(h).multiplyScalar(k);
+  const pbr = (color, o = {}) => new THREE.MeshPhysicalMaterial(Object.assign({ color, roughness: 0.35, metalness: 0, clearcoat: 0.5, clearcoatRoughness: 0.2 }, o));
+  const glow = (hex, k = 3, o = {}) => new THREE.MeshBasicMaterial(Object.assign({ color: col(hex, k), toneMapped: false }, o));
+  const FONT = '"Unbounded","Sora",sans-serif';
+  function ctex(w, h, draw, srgb = true) { const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h); const t = new THREE.CanvasTexture(c); if (srgb) t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t; }
+  const hash = (x, y) => { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); };
+  function vnoise(x, y) { const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf); return hash(xi, yi) * (1 - u) * (1 - v) + hash(xi + 1, yi) * u * (1 - v) + hash(xi, yi + 1) * (1 - u) * v + hash(xi + 1, yi + 1) * u * v; }
+  function fbm(x, y) { let a = 0.5, f = 1, s = 0; for (let i = 0; i < 5; i++) { s += a * vnoise(x * f, y * f); f *= 2; a *= 0.5; } return s; }
+  function pixTex(size, fn, srgb) { return ctex(size, size, (g, w) => { const im = g.createImageData(w, w); for (let y = 0; y < w; y++) for (let x = 0; x < w; x++) { const c = fn(x / w, y / w), i = (y * w + x) * 4; im.data[i] = c[0]; im.data[i + 1] = c[1]; im.data[i + 2] = c[2]; im.data[i + 3] = 255; } g.putImageData(im, 0, 0); }, srgb); }
+  const rep = (t, a, b) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(a, b); return t; };
+  const radialAlpha = ctex(256, 256, (g, w) => { const r = g.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2); r.addColorStop(0, '#fff'); r.addColorStop(0.7, '#aaa'); r.addColorStop(1, '#000'); g.fillStyle = r; g.fillRect(0, 0, w, w); }, false);
+  const shadowTex = ctex(256, 256, (g, w) => { const r = g.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2); r.addColorStop(0, 'rgba(0,0,0,.75)'); r.addColorStop(0.55, 'rgba(0,0,0,.3)'); r.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = r; g.fillRect(0, 0, w, w); });
+  const beamTex = ctex(8, 128, (g, w, h) => { const r = g.createLinearGradient(0, 0, 0, h); r.addColorStop(0, 'rgba(255,255,255,.85)'); r.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = r; g.fillRect(0, 0, w, h); });
+  const lathe = (pts, m, seg = 72) => new THREE.Mesh(new THREE.LatheGeometry(pts.map(p => new THREE.Vector2(p[0], p[1])), seg), m);
+
+  /* ---- the fight cage (hero) ---- */
+  function buildMma(P, hex) {
+    const g = new THREE.Group(), R = 2.15, H = 0.3, FH = 1.35, ACC = hex;
+    const matTop = pbr(0xffffff, { roughness: 0.55, clearcoat: 0.3, map: ctex(1024, 1024, (c, W) => {
+      c.fillStyle = '#16181f'; c.fillRect(0, 0, W, W);
+      for (let i = 0; i < 4000; i++) { c.fillStyle = 'rgba(255,255,255,' + (Math.random() * 0.04) + ')'; c.fillRect(Math.random() * W, Math.random() * W, 2, 2); }
+      c.strokeStyle = '#' + new THREE.Color(ACC).getHexString(); c.lineWidth = 22; c.beginPath(); c.arc(W / 2, W / 2, W * 0.2, 0, Math.PI * 2); c.stroke();
+      c.strokeStyle = 'rgba(255,255,255,.35)'; c.lineWidth = 4; c.beginPath(); c.arc(W / 2, W / 2, W * 0.4, 0, Math.PI * 2); c.stroke();
+      c.fillStyle = '#f2f4f8'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.font = '800 118px ' + FONT; c.fillText('FS', W / 2, W / 2 + 6);
+    }) });
+    const dark = pbr(0x14161c, { roughness: 0.4, metalness: 0.6 });
+    const floor = new THREE.Mesh(new THREE.CylinderGeometry(R, R * 1.04, H, 8), [dark, matTop, dark]); floor.position.y = H / 2; g.add(floor);
+    const chain = ctex(256, 256, (c, W) => { c.clearRect(0, 0, W, W); c.strokeStyle = 'rgba(210,215,225,.95)'; c.lineWidth = 6; for (let i = -W; i <= W * 2; i += 64) { c.beginPath(); c.moveTo(i, 0); c.lineTo(i + W, W); c.stroke(); c.beginPath(); c.moveTo(i, W); c.lineTo(i + W, 0); c.stroke(); } });
+    const len = 2 * R * Math.sin(Math.PI / 8); chain.wrapS = chain.wrapT = THREE.RepeatWrapping; chain.repeat.set(len * 2.2, FH * 2.2);
+    const fence = new THREE.MeshStandardMaterial({ map: chain, transparent: true, alphaTest: 0.3, side: THREE.DoubleSide, metalness: 0.9, roughness: 0.3, envMapIntensity: 1.2 });
+    const chrome = pbr(0xdfe3ea, { metalness: 1, roughness: 0.12, clearcoat: 0.4 }), pad = pbr(ACC, { roughness: 0.4, clearcoat: 0.9 });
+    const leds = glow(ACC, 3.2);
+    for (let k = 0; k < 8; k++) {
+      const a1 = k * Math.PI / 4, a2 = (k + 1) * Math.PI / 4;
+      const p1 = new THREE.Vector3(R * Math.sin(a1), 0, R * Math.cos(a1)), p2 = new THREE.Vector3(R * Math.sin(a2), 0, R * Math.cos(a2));
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, FH + 0.1, 20), chrome); post.position.set(p1.x, H + (FH + 0.1) / 2, p1.z); g.add(post);
+      const pd = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.26, 20), pad); pd.position.set(p1.x, H + FH * 0.55, p1.z); g.add(pd);
+      const mid = p1.clone().add(p2).multiplyScalar(0.5), ang = Math.atan2(-(p2.z - p1.z), p2.x - p1.x);
+      const f = new THREE.Mesh(new THREE.PlaneGeometry(len, FH), fence); f.position.set(mid.x * 0.985, H + FH / 2, mid.z * 0.985); f.rotation.y = ang; g.add(f);
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 0.08, 0.08), chrome); rail.position.set(mid.x, H + FH, mid.z); rail.rotation.y = ang; g.add(rail);
+      const led = new THREE.Mesh(new THREE.BoxGeometry(len * 0.96, 0.035, 0.06), leds); led.position.set(mid.x * 1.03, H + 0.015, mid.z * 1.03); led.rotation.y = ang; g.add(led);
+    }
+    const lamp = new THREE.Mesh(new THREE.TorusGeometry(R * 0.62, 0.04, 14, 80), glow(0xe8f6ff, 2.8)); lamp.rotation.x = Math.PI / 2; lamp.position.y = H + FH + 1.1; g.add(lamp);
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.62, R * 0.5, FH + 1.1, 56, 1, true), new THREE.MeshBasicMaterial({ color: col(ACC, 0.9), alphaMap: beamTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false, opacity: 0.55 }));
+    beam.position.y = H + (FH + 1.1) / 2; g.add(beam);
+    return { group: g, update(t) { leds.color.copy(col(ACC, 2.4 + Math.sin(t * 3) * 0.9)); beam.material.opacity = 0.45 + Math.sin(t * 1.3) * 0.08; lamp.rotation.z = t * 0.2; } };
+  }
+
+  /* ---- chips on felt: one stack per bet, tall in proportion to its stake ---- */
+  function chipStack(n, hex, x, z) {
+    const g = new THREE.Group(), hs = '#' + new THREE.Color(hex).getHexString();
+    const side = ctex(256, 32, (c, W, H) => { c.fillStyle = hs; c.fillRect(0, 0, W, H); c.fillStyle = '#f4f1e8'; for (let i = 0; i < 8; i++) c.fillRect(i * W / 8 + 8, 0, W / 16, H); }); side.wrapS = THREE.RepeatWrapping;
+    const top = ctex(128, 128, (c, W) => { c.fillStyle = hs; c.fillRect(0, 0, W, W); c.strokeStyle = '#f4f1e8'; c.lineWidth = 5; c.beginPath(); c.arc(W / 2, W / 2, W * 0.34, 0, 7); c.stroke(); c.beginPath(); c.arc(W / 2, W / 2, W * 0.2, 0, 7); c.stroke(); });
+    const ms = [new THREE.MeshPhysicalMaterial({ map: side, roughness: 0.4, clearcoat: 0.8 }), new THREE.MeshPhysicalMaterial({ map: top, roughness: 0.4, clearcoat: 0.8 }), new THREE.MeshPhysicalMaterial({ map: top, roughness: 0.4 })];
+    for (let i = 0; i < n; i++) { const c = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.08, 48), ms); c.position.set((Math.random() - .5) * 0.03, 0.04 + i * 0.085, (Math.random() - .5) * 0.03); c.rotation.y = Math.random() * 6; g.add(c); }
+    g.position.set(x, 0.18, z); return g;
+  }
+  function card(rank, suit, red) {
+    const face = pbr(0xffffff, { roughness: 0.5, clearcoat: 0.3, map: ctex(500, 700, (c, W, H) => { c.fillStyle = '#fbfaf6'; c.fillRect(0, 0, W, H); c.fillStyle = red ? '#e03a1e' : '#12131a'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.font = '800 104px ' + FONT; c.fillText(rank, 70, 78); c.font = '64px serif'; c.fillText(suit, 70, 160); c.font = '300px serif'; c.fillText(suit, W / 2, H / 2 + 14); }) });
+    const back = pbr(0x0e3b34); return new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.4, 0.02), [back, back, back, back, face, back]);
+  }
+  function buildChips(P, hex) {
+    const g = new THREE.Group();
+    const weave = pixTex(256, (u, v) => { const w = 0.5 + 0.5 * Math.sin(u * 220) * Math.sin(v * 220), n = vnoise(u * 90, v * 90); const k = 24 + w * 10 + n * 18; return [k * 0.5, k * 2.1, k * 1.7]; }); rep(weave, 3, 3);
+    const felt = pbr(0xffffff, { map: weave, bumpMap: weave, bumpScale: 1.4, roughness: 0.95, clearcoat: 0, envMapIntensity: 0.4, sheen: 0.6, sheenColor: new THREE.Color(hex), sheenRoughness: 0.7 });
+    const table = new THREE.Mesh(new THREE.CylinderGeometry(2.45, 2.45, 0.18, 96), felt); table.position.y = 0.09; g.add(table);
+    const rail = new THREE.Mesh(new THREE.TorusGeometry(2.5, 0.16, 28, 120), pbr(0x24160e, { roughness: 0.42, clearcoat: 0.8 })); rail.rotation.x = Math.PI / 2; rail.position.y = 0.2; g.add(rail);
+    const line = new THREE.Mesh(new THREE.TorusGeometry(1.75, 0.012, 8, 120), glow(hex, 2.4)); line.rotation.x = Math.PI / 2; line.position.y = 0.2; g.add(line);
+    const stakes = (P || '').split(',').map(Number).filter(x => x > 0), colors = [0xd8432f, 0x2a5fd8, 0xf4f1e8, 0x1d9a5a, 0x15151b, 0xe8b923];
+    const mx = Math.max(...stakes, 0.01), n = Math.min(stakes.length, 6);
+    stakes.slice(0, 6).forEach((s, i) => { const a = (i / Math.max(n, 1)) * Math.PI * 2 + 0.6, r = n > 1 ? 1.15 : 0; g.add(chipStack(Math.max(1, Math.round(s / mx * 9)), colors[i % colors.length], Math.cos(a) * r, Math.sin(a) * r)); });
+    if (!stakes.length) { const c1 = card('A', '♠', false); c1.position.set(-0.45, 0.2, 0); c1.rotation.set(-Math.PI / 2 + 0.02, 0, 0.35); g.add(c1); const c2 = card('K', '♥', true); c2.position.set(0.45, 0.21, 0.1); c2.rotation.set(-Math.PI / 2 + 0.02, 0, -0.2); g.add(c2); }
+    return { group: g, update(t) { line.material.color.copy(col(hex, 2.1 + Math.sin(t * 2) * 0.7)); } };
+  }
+
+  /* ---- podium for the track record ---- */
+  function trophy(tm) { const t = new THREE.Group(); t.add(lathe([[0, 0], [0.7, 0], [0.7, 0.14], [0.6, 0.18], [0.42, 0.22], [0.4, 0.3], [0.16, 0.36], [0.12, 0.6], [0.12, 0.78], [0.2, 0.88], [0.3, 0.94], [0.62, 1.06], [0.78, 1.36], [0.84, 1.75], [0.86, 2.0], [0.8, 2.0], [0.76, 1.76], [0.7, 1.4], [0.56, 1.12], [0.28, 1.0], [0, 0.98]], tm)); [1, -1].forEach(s => { const h = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.065, 20, 48, Math.PI), tm); h.rotation.z = -s * Math.PI / 2; h.position.set(s * 0.8, 1.52, 0); t.add(h); }); return t; }
+  function buildElo(P, hex) {
+    const g = new THREE.Group(), spinners = [];
+    const veins = pixTex(512, (u, v) => { const n = Math.abs(fbm(u * 6, v * 6) - 0.5) * 2, l = Math.pow(1 - Math.min(1, n * 6), 3); const b = 12 + l * 70; return [b, b + 4, b + 10]; });
+    const obs = pbr(0xffffff, { map: veins, roughness: 0.18, metalness: 0.5, clearcoat: 1, clearcoatRoughness: 0.06 });
+    const metals = { gold: 0xf1bf4a, silver: 0xdde4f0, bronze: 0xcf8751 };
+    const edgeMat = new THREE.LineBasicMaterial({ color: col(hex, 2.6), toneMapped: false });
+    [{ x: 0, h: 1.15, n: '1', c: 'gold', s: 1.0 }, { x: -1.85, h: 0.72, n: '2', c: 'silver', s: 0.72 }, { x: 1.85, h: 0.46, n: '3', c: 'bronze', s: 0.72 }].forEach(b => {
+      const geo = new RoundedBoxGeometry(1.7, b.h, 1.5, 5, 0.07);
+      const box = new THREE.Mesh(geo, obs); box.position.set(b.x, b.h / 2, 0); g.add(box);
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 40), edgeMat); edges.position.copy(box.position); g.add(edges);
+      const tm = pbr(metals[b.c], { metalness: 1, roughness: 0.14, clearcoat: 0.5, side: THREE.DoubleSide, envMapIntensity: 1.5 });
+      const t = trophy(tm); t.scale.setScalar(b.s); t.position.set(b.x, b.h, 0); g.add(t); spinners.push(t);
+    });
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(2.95, 0.011, 12, 160), glow(hex, 2.0)); ring.rotation.x = Math.PI / 2 + 0.28; ring.position.y = 1.7; g.add(ring);
+    const sats = [0, 1, 2].map(() => { const s = new THREE.Mesh(new THREE.SphereGeometry(0.07, 20, 14), glow(0xffffff, 2.4)); ring.add(s); return s; });
+    return { group: g, update(t) { spinners.forEach((s, i) => { s.rotation.y = t * 0.55 + i; }); ring.rotation.z = t * 0.25; sats.forEach((s, i) => { const a = t * 0.9 + i * 2.09; s.position.set(Math.cos(a) * 2.95, Math.sin(a) * 2.95, 0); }); } };
+  }
+
+  const KINDS = { mma: buildMma, chips: buildChips, elo: buildElo };
+  const TILT = { mma: 0.52, chips: 0.62, elo: 0.34 }, BASE = { mma: 0.3, chips: -0.2, elo: -0.3 };
+  function instance(kind, params, hexStr) {
+    const hex = new THREE.Color(hexStr || '#5CE1FF').getHex();
+    const a = KINDS[kind](params, hex), m = KINDS[kind](params, hex);
+    const box = new THREE.Box3().setFromObject(a.group), size = box.getSize(new THREE.Vector3());
+    const spin = new THREE.Group(); spin.add(a.group); m.group.scale.y = -1; spin.add(m.group);
+    const pivot = new THREE.Group(); pivot.add(spin);
+    const rad = Math.hypot(size.x, size.z) / 2 * 1.02;
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(rad * 1.05, 96), new THREE.MeshPhysicalMaterial({ color: 0x06070c, roughness: 0.16, metalness: 0.3, clearcoat: 1, transparent: true, opacity: 0.8, alphaMap: radialAlpha, depthWrite: false }));
+    disc.rotation.x = -Math.PI / 2; disc.position.y = 0.004; pivot.add(disc);
+    const ringMat = glow(hex, 2.2, { transparent: true, opacity: 0.8, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(rad * 0.93, rad * 0.945, 128), ringMat); ring.rotation.x = -Math.PI / 2; ring.position.y = 0.008; pivot.add(ring);
+    const ring2 = new THREE.Mesh(new THREE.RingGeometry(rad * 0.7, rad * 0.703, 128), ringMat); ring2.rotation.x = -Math.PI / 2; ring2.position.y = 0.008; pivot.add(ring2);
+    const sh = new THREE.Mesh(new THREE.PlaneGeometry(size.x * 1.5, size.z * 1.5), new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false })); sh.rotation.x = -Math.PI / 2; sh.position.y = 0.012; pivot.add(sh);
+    pivot.position.y = -size.y * 0.42;
+    const holder = new THREE.Group(); holder.add(pivot); scene.add(holder);
+    return { kind, holder, spin, ringMat, hex, a, m, r: Math.max(size.y * 0.55, rad * 0.92), x: 0, rot: 0, hover: 0, lean: 0 };
+  }
+  const items = slots.map(el => { const it = instance(el.dataset.obj, el.dataset.stakes, el.dataset.ring); it.el = el; it.side = el.parentNode.classList.contains('flip') ? -1 : 1; return it; });
+
+  const NP = 520, pp = new Float32Array(NP * 3), sd = new Float32Array(NP * 3);
+  for (let i = 0; i < NP; i++) { sd[i * 3] = Math.random(); sd[i * 3 + 1] = Math.random(); sd[i * 3 + 2] = 0.08 + Math.random() * 0.92; }
+  const pg = new THREE.BufferGeometry(); pg.setAttribute('position', new THREE.BufferAttribute(pp, 3)); pg.setAttribute('aSeed', new THREE.BufferAttribute(sd, 3));
+  const pmat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uTime: { value: 0 }, uScroll: { value: 0 }, uH: { value: 800 }, uW: { value: 1200 }, uPix: { value: 1 }, uColor: { value: new THREE.Color(0x5ce1ff) } },
+    vertexShader: 'uniform float uTime,uScroll,uH,uW,uPix; attribute vec3 aSeed; varying float vA; void main(){ float d=aSeed.z; float y=mod(aSeed.y*(uH+300.)-uScroll*d*0.55+uTime*(6.+d*26.),uH+300.)-(uH*0.5+150.); float x=(aSeed.x-0.5)*uW+sin(uTime*0.25+aSeed.y*12.)*14.; gl_Position=projectionMatrix*modelViewMatrix*vec4(x,y,-600.*(1.-d),1.); gl_PointSize=(1.1+d*3.2)*uPix; vA=0.18+d*0.7; }',
+    fragmentShader: 'uniform vec3 uColor; varying float vA; void main(){ float r=length(gl_PointCoord-0.5); float a=smoothstep(0.5,0.0,r)*vA; gl_FragColor=vec4(uColor*a*1.6,a); }' });
+  const dust = new THREE.Points(pg, pmat); dust.frustumCulled = false; scene.add(dust);
+
+  let W = 0, H = 0, acc = new THREE.Color(0x5ce1ff), accTarget = new THREE.Color(0x5ce1ff), pulse = 0;
+  function size() { W = innerWidth; H = innerHeight; renderer.setSize(W, H, false); composer.setSize(W, H); bloom.setSize(W, H); cam.left = -W / 2; cam.right = W / 2; cam.top = H / 2; cam.bottom = -H / 2; cam.updateProjectionMatrix(); pmat.uniforms.uW.value = W; pmat.uniforms.uH.value = H; pmat.uniforms.uPix.value = renderer.getPixelRatio(); }
+  size(); addEventListener('resize', size);
+  addEventListener('chapter', e => { accTarget.set(e.detail.hex); pulse = 1; });
+  const t0 = performance.now(); let last = t0, lastScroll = scrollY, vel = 0, shown = false;
+  const ease = x => 1 - Math.pow(1 - Math.min(1, Math.max(0, x)), 3);
+  function frame(now) {
+    requestAnimationFrame(frame); if (document.hidden) return;
+    const t = (now - t0) / 1000, dt = Math.min(0.1, Math.max(0, (now - last) / 1000)); last = now; const k = 1 - Math.exp(-dt * 5);
+    const sc = window.__scroll != null ? window.__scroll : scrollY;
+    vel += ((sc - lastScroll) / Math.max(dt, 0.001) / 2400 - vel) * (1 - Math.exp(-dt * 6)); lastScroll = sc;
+    acc.lerp(accTarget, 1 - Math.exp(-dt * 3)); pulse *= Math.exp(-dt * 2.2);
+    pmat.uniforms.uTime.value = t; pmat.uniforms.uScroll.value = sc; pmat.uniforms.uColor.value.copy(acc);
+    bloom.strength = 0.34 + pulse * 0.3; key.color.setRGB(1, 1, 1).lerp(acc, 0.15); rimL.color.copy(acc).lerp(new THREE.Color(0x8fb4ff), 0.4);
+    const intro = reduce ? 1 : ease((t - 0.2) / 1.9), mx = window.__px != null ? window.__px : 0, my = window.__py != null ? window.__py : 0;
+    items.forEach(it => {
+      const r = it.el.getBoundingClientRect(), on = r.bottom > -140 && r.top < H + 140 && r.width > 0; it.holder.visible = on; if (!on) return;
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2, rad = Math.min(r.width, r.height) / 2, off = Math.max(-1, Math.min(1, (cy - H / 2) / H));
+      const s = rad * 0.92, drift = reduce ? 0 : it.side * Math.abs(off) * r.width * 0.18; it.x += (drift - it.x) * k;
+      const x = cx + it.x, y = cy + (reduce ? 0 : Math.sin(t * 0.8 + it.r) * 5);
+      const hov = (Math.abs(x - (mx + 0.5) * W) < s * 1.3 && Math.abs(y - (my + 0.5) * H) < s * 1.3) ? 1 : 0; it.hover += (hov - it.hover) * k;
+      it.rot += ((reduce ? 0 : (t * 0.14 - off * 1.5 + it.hover * 0.5)) - it.rot) * k; it.lean += ((reduce ? 0 : -vel * 0.35) - it.lean) * k;
+      it.a.update(t); it.m.update(t);
+      it.holder.position.set(x - W / 2, H / 2 - y, 0); it.holder.scale.setScalar((s / it.r) * (0.55 + 0.45 * intro) * (1 + it.hover * 0.05));
+      it.holder.rotation.set(TILT[it.kind] + (reduce ? 0 : my * 0.14), 0, it.lean * 0.4);
+      it.spin.rotation.y = BASE[it.kind] + it.rot + (reduce ? 0 : mx * 0.35);
+      it.ringMat.color.copy(col(it.hex, 1.6 + it.hover * 1.4)); it.ringMat.opacity = intro * 0.85;
+    });
+    composer.render();
+    if (!shown) { shown = true; document.documentElement.classList.add('has3d'); }
+  }
+  const ready = document.fonts && document.fonts.load ? Promise.all([document.fonts.load('800 100px Unbounded')]) : Promise.resolve();
+  Promise.race([ready, new Promise(r => setTimeout(r, 1500))]).then(() => requestAnimationFrame(frame), () => requestAnimationFrame(frame));
+} catch (err) { console.warn('3D layer not started:', err && err.message); }
+</script>

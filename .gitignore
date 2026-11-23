@@ -1,0 +1,10 @@
+data/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# scraped or derived from scraped third-party odds: never redistribute
+cards/*.csv
+ufc-ui/data.json
+ufc-ui/index.html
+docs/fightweek*.html

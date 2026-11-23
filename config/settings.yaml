@@ -1,0 +1,10 @@
+database: data/processed/ufc.duckdb
+raw_dir: data/raw
+user_agent: "ufc-model-research/0.1 (personal research)"
+ingest:
+  min_delay_sec: 3.0        # rate limit between live requests
+  cache_dir: data/raw/cache
+qa:
+  round_seconds: 300
+  overround_min: 1.02
+  overround_max: 1.10

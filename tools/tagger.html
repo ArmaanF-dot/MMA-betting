@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UFC fight tagger</title>
+<style>
+  :root { --bg:#fafaf8; --fg:#1b1b1a; --muted:#6b6b66; --line:#d8d8d2; --card:#fff; --accent:#1f5fbf; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161615; --fg:#ececea; --muted:#9a9a94; --line:#33332f; --card:#1f1f1d; --accent:#6aa3ff; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.4 system-ui, sans-serif; }
+  main { max-width:960px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; margin:0 0 4px; } .muted { color:var(--muted); }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:10px 0; }
+  input, select, button { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); }
+  button { cursor:pointer; } button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  #clock { font:600 40px ui-monospace, monospace; } #clock.running { color:var(--accent); }
+  .keys { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:6px; }
+  .keys button { text-align:left; } kbd { border:1px solid var(--line); border-radius:4px; padding:0 5px; margin-right:6px; font:12px ui-monospace, monospace; }
+  #form { border:1px solid var(--accent); border-radius:8px; padding:12px; background:var(--card); margin:10px 0; }
+  #form label { display:inline-block; min-width:170px; margin:3px 0; } #form[hidden] { display:none; }
+  table { width:100%; border-collapse:collapse; } td, th { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left; font-size:14px; }
+  pre { background:var(--card); border:1px solid var(--line); padding:8px; border-radius:6px; overflow:auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>UFC fight tagger</h1>
+  <p class="muted">Use beside a legally licensed stream in another window. This page never loads or stores footage.
+  Sync the clock to the broadcast round clock, press an event key, fill the form with Tab, press Enter to save, Esc to cancel.</p>
+
+  <div class="row">
+    <label>Bout ID <input id="bout" placeholder="ufc-300-...-03" size="34"></label>
+    <label>Tagger <input id="tagger" value="armaan" size="10"></label>
+    <label>Fighter A (red) <input id="nameA" size="14"></label>
+    <label>Fighter B (blue) <input id="nameB" size="14"></label>
+  </div>
+
+  <div class="row">
+    <div id="clock">R1 0:00</div>
+    <button id="startBtn" class="primary"><kbd>Space</kbd>Start / pause</button>
+    <button id="nextRound"><kbd>N</kbd>Next round (clock to 0:00)</button>
+    <button id="minus"><kbd>[</kbd>-1 s</button><button id="plus"><kbd>]</kbd>+1 s</button>
+    <button id="undoBtn"><kbd>U</kbd>Undo last</button>
+  </div>
+
+  <div class="keys" id="keys"></div>
+  <form id="form" hidden></form>
+
+  <h3>Events <span class="muted" id="count"></span></h3>
+  <table><thead><tr><th>#</th><th>Round</th><th>Time</th><th>Event</th><th>Fighter</th><th>Details</th><th></th></tr></thead><tbody id="list"></tbody></table>
+
+  <div class="row">
+    <button id="summaryBtn">Round-end summary</button>
+    <button id="jsonBtn" class="primary">Export JSON</button>
+    <button id="csvBtn">Export CSV</button>
+    <span class="muted">Save both into <code>data/tags/</code>, then run <code>python -m ufcmodel import-tags data/tags</code>.</span>
+  </div>
+  <pre id="summary" hidden></pre>
+</main>
+<script>
+const SCHEMA = {
+  p: { type: "position_change", label: "Position change", fields: {
+    position: ["distance","clinch_open","clinch_cage_A_pins_B","clinch_cage_B_pins_A","back_standing_A_on_B","back_standing_B_on_A",
+      "ground_guard","ground_half_guard","ground_side_control","ground_mount","ground_back","ground_front_headlock","ground_turtle"],
+    top: ["A","B","none"] } },
+  t: { type: "takedown_attempt", label: "Takedown attempt", who: true, fields: {
+    kind: ["single","double","high_crotch","body_lock","inside_trip","outside_trip","ankle_pick","reactive_double","throw","kick_catch","mat_return"],
+    location: ["cage","open"],
+    setup: ["none","jab","cross","overhand","hook","low_kick","body_kick","feint","clinch"],
+    result: ["landed","stuffed","landed_up_10s","landed_up_30s"] } },
+  g: { type: "get_up", label: "Get-up", who: true, fields: {
+    time_to_stand_s: "number", method: ["wall_walk","technical_standup","scramble","referee_standup"] } },
+  s: { type: "submission_attempt", label: "Submission attempt", who: true, fields: {
+    sub: ["rear_naked_choke","guillotine","arm_triangle","armbar","triangle","kimura","other"], outcome: ["escaped","tapped","round_ended"] } },
+  h: { type: "hurt_event", label: "Hurt event (fighter hurt)", who: true, fields: {
+    kind: ["rocked","knockdown"], strike: ["jab","cross","hook","overhand","uppercut","body","kick","knee","elbow","other"],
+    response: ["fires_back","clinches","retreats","shells","shoots"] } },
+  r: { type: "pressure_sequence", label: "Pressure sequence (who moves forward)", who: true, fields: {
+    exit: ["straight_back","lateral","pivot","clinch","counter"], ends_on_cage: ["yes","no"] } },
+  k: { type: "kick_outcome", label: "Kick outcome (kicker)", who: true, fields: { outcome: ["checked","landed","caught"] } },
+  w: { type: "stance_switch", label: "Stance switch", who: true, fields: { new_stance: ["orthodox","southpaw"] } },
+};
+const state = { round: 1, ms: 0, running: false, last: 0, events: [] };
+const $ = id => document.getElementById(id);
+const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+function render() {
+  $("clock").textContent = `R${state.round} ${fmt(state.ms / 1000)}`;
+  $("clock").className = state.running ? "running" : "";
+  $("count").textContent = `(${state.events.length})`;
+  $("list").innerHTML = state.events.map((e, i) => {
+    const { round, t, type, fighter, ...rest } = e;
+    return `<tr><td>${i + 1}</td><td>${round}</td><td>${fmt(t)}</td><td>${type}</td><td>${fighter ?? ""}</td>
+      <td>${Object.entries(rest).map(([k, v]) => `${k}=${v}`).join(", ")}</td><td><button data-del="${i}">x</button></td></tr>`;
+  }).join("");
+}
+function tick() {
+  if (state.running) { const now = performance.now(); state.ms += now - state.last; state.last = now; render(); }
+  requestAnimationFrame(tick);
+}
+function toggle() { state.running = !state.running; state.last = performance.now(); render(); }
+function nudge(s) { state.ms = Math.max(0, state.ms + s * 1000); render(); }
+function nextRound() { state.round++; state.ms = 0; state.running = false; render(); }
+function undo() { state.events.pop(); render(); }
+
+let pending = null;
+function openForm(key) {
+  const spec = SCHEMA[key]; if (!spec) return;
+  const t = state.ms / 1000, round = state.round;  // stamp when the key was pressed, not when saved
+  pending = { spec, t, round };
+  const nA = $("nameA").value || "A", nB = $("nameB").value || "B";
+  let html = `<strong>${spec.label}</strong> at R${round} ${fmt(t)}<br>`;
+  if (spec.who) html += `<label>Fighter <select name="fighter"><option value="A">A: ${nA}</option><option value="B">B: ${nB}</option></select></label><br>`;
+  for (const [name, opts] of Object.entries(spec.fields)) {
+    html += `<label>${name} `;
+    html += opts === "number" ? `<input name="${name}" type="number" min="0" step="0.5" size="5">`
+      : `<select name="${name}">${opts.map(o => `<option>${o}</option>`).join("")}</select>`;
+    html += `</label><br>`;
+  }
+  html += `<button type="submit" class="primary">Save (Enter)</button> <button type="button" id="cancel">Cancel (Esc)</button>`;
+  $("form").innerHTML = html; $("form").hidden = false;
+  $("form").querySelector("select, input").focus();
+  $("cancel").onclick = closeForm;
+}
+function closeForm() { $("form").hidden = true; pending = null; }
+$("form").addEventListener("submit", ev => {
+  ev.preventDefault(); if (!pending) return;
+  const data = Object.fromEntries(new FormData($("form")));
+  const e = { round: pending.round, t: Math.round(pending.t * 10) / 10, type: pending.spec.type, fighter: data.fighter ?? null };
+  delete data.fighter;
+  for (const [k, v] of Object.entries(data)) e[k] = pending.spec.fields[k] === "number" ? (v === "" ? null : Number(v)) : v;
+  state.events.push(e); closeForm(); render();
+});
+document.addEventListener("keydown", ev => {
+  if (!$("form").hidden) { if (ev.key === "Escape") closeForm(); return; }
+  if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+  const k = ev.key.toLowerCase();
+  if (k === " ") { ev.preventDefault(); toggle(); }
+  else if (k === "n") nextRound();
+  else if (k === "[") nudge(-1); else if (k === "]") nudge(1);
+  else if (k === "u") undo();
+  else if (SCHEMA[k]) { ev.preventDefault(); openForm(k); }
+});
+$("keys").innerHTML = Object.entries(SCHEMA).map(([k, s]) => `<button data-key="${k}"><kbd>${k.toUpperCase()}</kbd>${s.label}</button>`).join("");
+$("keys").onclick = e => { const k = e.target.closest("button")?.dataset.key; if (k) openForm(k); };
+$("list").onclick = e => { const i = e.target.dataset.del; if (i !== undefined) { state.events.splice(+i, 1); render(); } };
+$("startBtn").onclick = toggle; $("nextRound").onclick = nextRound; $("undoBtn").onclick = undo;
+$("minus").onclick = () => nudge(-1); $("plus").onclick = () => nudge(1);
+
+$("summaryBtn").onclick = () => {
+  const by = {};
+  for (const e of state.events) {
+    const r = (by[e.round] ??= { tdA: 0, tdB: 0, tdAtt_A: 0, tdAtt_B: 0, hurt_A: 0, hurt_B: 0, sub_A: 0, sub_B: 0 });
+    if (e.type === "takedown_attempt") { r["tdAtt_" + e.fighter]++; if (String(e.result).startsWith("landed")) r["td" + e.fighter]++; }
+    if (e.type === "hurt_event") r["hurt_" + e.fighter]++;
+    if (e.type === "submission_attempt") r["sub_" + e.fighter]++;
+  }
+  $("summary").textContent = Object.entries(by).map(([r, v]) =>
+    `Round ${r}: takedowns landed A ${v.tdA}/${v.tdAtt_A} B ${v.tdB}/${v.tdAtt_B} | hurt A ${v.hurt_A} B ${v.hurt_B} | sub attempts A ${v.sub_A} B ${v.sub_B}`).join("\n")
+    + "\n\nCompare takedowns with the broadcast stats before exporting.";
+  $("summary").hidden = false;
+};
+function download(name, text, mime) {
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type: mime })); a.download = name; a.click();
+}
+function bout() { const b = $("bout").value.trim(); if (!b) alert("Enter the bout ID first."); return b; }
+$("jsonBtn").onclick = () => { const b = bout(); if (b) download(`${b}.json`, JSON.stringify({ bout_id: b, tagger: $("tagger").value, events: state.events }, null, 1), "application/json"); };
+$("csvBtn").onclick = () => {
+  const b = bout(); if (!b) return;
+  const keys = [...new Set(state.events.flatMap(e => Object.keys(e)))];
+  const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  download(`${b}.csv`, [keys.join(","), ...state.events.map(e => keys.map(k => esc(e[k])).join(","))].join("\n"), "text/csv");
+};
+render(); tick();
+</script>
+</body>
+</html>
